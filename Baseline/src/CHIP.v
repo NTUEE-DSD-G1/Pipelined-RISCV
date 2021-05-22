@@ -1,4 +1,6 @@
 // Top module of your design, you cannot modify this module!!
+`include "cache.v"
+
 module CHIP (	clk,
 				rst_n,
 //----------for slow_memD------------
