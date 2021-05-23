@@ -100,7 +100,7 @@ module RISCV_Pipeline(
 
     // Hazard detection unit  
     reg             IF_PCWrite;
-    reg             IF_Write;
+    reg             IF_IRWrite;
     reg             ID_stall;      
 
     // Control signals
@@ -151,7 +151,8 @@ module RISCV_Pipeline(
             next_PC = IF_PC;
         end
         else if(IF_PCWrite) begin
-            if(IF_flush | ID_Jal) begin
+            // IF_flush = BNE or BEQ
+            if(IF_flush | ID_Jal | ID_Jalr) begin
                 next_PC = ID_addr;
             end
             else begin
@@ -171,11 +172,11 @@ module RISCV_Pipeline(
         end
         else begin 
             // Endian conversion
-            next_IR = IF_Write ? {ICACHE_rdata[7:0], ICACHE_rdata[15:8], ICACHE_rdata[23:16], ICACHE_rdata[31:24]} : IR;
+            next_IR = IF_IRWrite ? {ICACHE_rdata[7:0], ICACHE_rdata[15:8], ICACHE_rdata[23:16], ICACHE_rdata[31:24]} : IR;
         end
     end
     
-    // ID:
+    // ID: instruction related
     assign funct3 = IR[14:12];
     assign opcode = IR[6:0];
 
@@ -276,15 +277,12 @@ module RISCV_Pipeline(
             MEM: EX_din_1 = MEM_dout;
             WB:  EX_din_1 = WB_busRD;
         endcase
-        // if the 2nd input is from immgen, don't forwarding 
-        if(~EX_ALUSrc) begin    
-            case(ForwardB)
-                ORI: EX_din_2 = EX_busRS2;
-                MEM: EX_din_2 = MEM_dout;
-                WB:  EX_din_2 = WB_busRD;
-            endcase
-        end
-        else EX_din_2 = EX_immgen;
+        // if the 2nd input is from immgen, don't forwarding  
+        case(ForwardB)
+            ORI: EX_din_2 = EX_ALUSrc ? EX_immgen : EX_busRS2;
+            MEM: EX_din_2 = MEM_dout;
+            WB:  EX_din_2 = WB_busRD;
+        endcase
     end
     
     // EX: ALU
@@ -333,13 +331,13 @@ module RISCV_Pipeline(
     // Hazard detection unit
     always@(*) begin
         IF_PCWrite = 1; // can write new value to PC
-        IF_Write = 1;   // can write new value to IR
+        IF_IRWrite = 1;   // can write new value to IR
         ID_stall = 0;
         // lw and (RD of lw == RS1 or RS2)  (make sure that the RS2 is not immgen)
         // load use situation occurs
         if(((EX_RD == ID_RS1) | ((EX_RD == ID_RS2) & (~ID_ALUSrc))) & (EX_MemRead)) begin
             IF_PCWrite = 0;
-            IF_Write = 0;
+            IF_IRWrite = 0;
             ID_stall = 1;
         end
     end 
