@@ -362,9 +362,9 @@ module RISCV_Pipeline(
             IR    <= 0;
         end
         else begin
-            IF_PC <= next_PC;
-            ID_PC <= IF_PC;
-            IR    <= next_IR;
+            IF_PC <= DCACHE_stall ? IF_PC : next_PC;
+            ID_PC <= DCACHE_stall ? ID_PC : IF_PC;
+            IR    <= DCACHE_stall ? IR : next_IR;
         end
     end
     
@@ -401,18 +401,19 @@ module RISCV_Pipeline(
             WB_RegWrite     <= 0;
         end
         else begin
-            EX_ALUSrc       <= ID_ALU_h;
-            EX_ALUOp        <= ID_ALUOp_h;
-            EX_MemWrite     <= ID_MemWrite_h;
-            EX_MemRead      <= ID_MemRead_h;
-            EX_MemtoReg     <= ID_MemtoReg_h;
-            EX_RegWrite     <= ID_RegWrite_h;
+            EX_ALUSrc       <= DCACHE_stall ? EX_ALUSrc : ID_ALU_h;
+            EX_ALUOp        <= DCACHE_stall ? EX_ALOp : ID_ALUOp_h;
+            EX_MemWrite     <= DCACHE_stall ? EX_MemWrite : ID_MemWrite_h;
+            EX_MemRead      <= DCACHE_stall ? EX_MemRead : ID_MemRead_h;
+            EX_MemtoReg     <= DCACHE_stall ? EX_MemtoReg : ID_MemtoReg_h;
+            EX_RegWrite     <= DCACHE_stall ? EX_RegWrite : ID_RegWrite_h;
             
-            MEM_MemWrite    <= EX_MemWrite;
-            MEM_MemRead     <= EX_MemRead;     
-            MEM_MemtoReg    <= EX_MemtoReg;
-            MEM_RegWrite    <= EX_RegWrite;
+            MEM_MemWrite    <= DCACHE_stall ? MEM_MemWrite : EX_MemWrite;
+            MEM_MemRead     <= DCACHE_stall ? MEM_MemRead : EX_MemRead;     
+            MEM_MemtoReg    <= DCACHE_stall ? MEM_MemtoReg : EX_MemtoReg;
+            MEM_RegWrite    <= DCACHE_stall ? MEM_RegWrite : EX_RegWrite;
             
+            // write_back -> no need to stall 
             WB_MemtoReg     <= MEM_MemtoReg;
             WB_RegWrite     <= MEM_RegWrite;
         end
@@ -429,11 +430,13 @@ module RISCV_Pipeline(
             WB_dout         <= 0;
         end
         else begin
-            EX_din_1_ori    <= ID_din_1;
-            EX_din_2_ori    <= ID_din_2;
-            EX_ctrl         <= ID_ctrl;
-            MEM_dout        <= EX_dout;
-            MEM_din_2       <= EX_din_2;
+            EX_din_1_ori    <= DCACHE_stall ? EX_din_1_ori : ID_din_1;
+            EX_din_2_ori    <= DCACHE_stall ? EX_din_2_ori : ID_din_2;
+            EX_ctrl         <= DCACHE_stall ? EX_ctrl : ID_ctrl;
+            MEM_dout        <= DCACHE_stall ? MEM_dout : EX_dout;
+            MEM_din_2       <= DCACHE_stall ? MEM_din_2 : EX_din_2;
+            
+            // write_back -> no need to stall 
             WB_dout         <= MEM_dout;
         end
     end
@@ -450,11 +453,12 @@ module RISCV_Pipeline(
         end
         else begin
             WB_RD           <= MEM_RD;
-            MEM_RD          <= EX_RD;
-            EX_RD           <= ID_RD;
+            
+            MEM_RD          <= DCACHE_stall ? MEM_RD : EX_RD;
+            EX_RD           <= DCACHE_stall ? EX_RD : ID_RD;
             // forwarding unit using
-            EX_RS1          <= ID_RS1;
-            EX_RS2          <= ID_RS2;
+            EX_RS1          <= DCACHE_stall ? EX_RS1 : ID_RS1;
+            EX_RS2          <= DCACHE_stall ? EX_RS2 : ID_RS2;
         end
     end
 endmodule
