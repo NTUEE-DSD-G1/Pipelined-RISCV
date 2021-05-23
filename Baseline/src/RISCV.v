@@ -130,10 +130,20 @@ module RISCV_Pipeline(
     reg             EX_MemtoReg, MEM_MemtoReg, WB_MemtoReg;
     reg             EX_RegWrite, MEM_RegWrite, WB_RegWrite;
 
+    // ICACHE stall strategy:
+    // keep doing NOP until the ICACHE is ready
+
+    // DCACHE stall strategy:
+    // keep everthing in the flipflop unchanged
+
     // ---------------------- Combinational part ----------------------
     // PC
     always@(*) begin
-        if(IF_PCWrite) begin
+        // if ICACHE is not ready, keep PC the same
+        if(ICACHE_stall) begin
+            next_PC = IF_PC;
+        end
+        else if(IF_PCWrite) begin
             if(IF_flush | ID_Jal) begin
                 next_PC = ID_addr;
             end
@@ -145,8 +155,10 @@ module RISCV_Pipeline(
             next_PC = IF_PC;
         end
     end 
+    
+    // instruction
     always@(*) begin
-        if(IF_flush) begin
+        if(IF_flush | ICACHE_stall) begin
             // NOP: addi $r0 $r0 0 
             next_IR = 32'b00000000000000000000000000010011;
         end
