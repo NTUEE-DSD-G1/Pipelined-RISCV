@@ -51,12 +51,16 @@ module RISCV_Pipeline(
     parameter SRL   = 4'd7;
     parameter SLT   = 4'd8;
 
+    // ---------------------- parameter for Forwarding unit ----------------------
+    parameter ORI   = 2'b00;    // pass data from regfile to LUA
+    parameter MEM   = 2'b01;    // pass data from ALU to ALU
+    parameter WB    = 2'b10;    // pass data from MEM to ALU
     // ---------------------- Wire/Reg declaration ----------------------
     integer i;
     // PC
     reg     [31:0]  IF_PC;
     reg     [31:0]  ID_PC;
-    wire    [31:0]  next_PC;
+    reg     [31:0]  next_PC;
 
     // register file
     reg     [31:0]  regfile_w [0:31];  
@@ -67,13 +71,15 @@ module RISCV_Pipeline(
     reg     [31:0]  WB_busRD;
 
     // instruction
-    wire    [31:0]  IR;                 // Endian Conversion from ICACHE
+    reg     [31:0]  IR;               
+    reg     [31:0]  next_IR;
     wire    [2:0]   funct3;
     wire    [6:0]   opcode;
 
     // ALU
     wire    [31:0]  ID_din_1, ID_din_2;
     wire    [3:0]   ID_ctrl;
+    reg     [31:0]  EX_din_1_ori, EX_din_2_ori;
     reg signed [31:0] EX_din_1, EX_din_2;
     reg     [31:0]  MEM_din_2;
     reg     [3:0]   EX_ctrl;
@@ -84,19 +90,39 @@ module RISCV_Pipeline(
 
     // Branch and Jalr and Jal
     wire            ID_Equal;
-    wire    [31:0]  ID_addr;      
+    wire    [31:0]  ID_addr;
+
+    // Forwarding unit
+    reg     [1:0]   ForwardA, ForwardB;
+    reg     [4:0]   EX_RS1, EX_RS2;
+
+    // Hazard detection unit  
+    reg             IF_PCWrite;
+    reg             IF_Write;
+    reg             ID_stall;      
 
     // Control signals
+    wire            IF_flush;
     wire            ID_Branch;          // ID
+    wire            ID_BranchNot;       // ID
     wire            ID_Jalr;            // ID
     wire            ID_Jal;             // ID
-    wire            ID_ALUSrc;          // ID
+    wire            ID_ALUSrc;          // ID->EX
     wire            ID_ALUOp;           // ID->EX
     wire            ID_MemWrite;        // ID->EX->MEM
     wire            ID_MemRead;         // ID->EX->MEM
     wire            ID_MemtoReg;        // ID->EX->MEM->WB
     wire            ID_RegWrite;        // ID->EX->MEM->WB
+        
+        // Control signals after hazard mux
+        wire            ID_ALUSrc_h;          // ID->EX
+        wire            ID_ALUOp_h;           // ID->EX
+        wire            ID_MemWrite_h;        // ID->EX->MEM
+        wire            ID_MemRead_h;         // ID->EX->MEM
+        wire            ID_MemtoReg_h;        // ID->EX->MEM->WB
+        wire            ID_RegWrite_h;        // ID->EX->MEM->WB
     
+    reg             EX_ALUSrc;
     reg             EX_ALUOp;
     reg             EX_ALUSrc;
     reg             EX_MemWrite, MEM_MemWrite;
@@ -106,15 +132,37 @@ module RISCV_Pipeline(
 
     // ---------------------- Combinational part ----------------------
     // PC
-    assign next_PC = (((ID_Branch & ID_Equal) | ID_Jal) | (ID_Jalr)) ? ID_addr : (IF_PC + 4); 
+    always@(*) begin
+        if(IF_PCWrite) begin
+            if(IF_flush | ID_Jal) begin
+                next_PC = ID_addr;
+            end
+            else begin
+                next_PC = IF_PC + 4;
+            end
+        end
+        else begin
+            next_PC = IF_PC;
+        end
+    end 
+    always@(*) begin
+        if(IF_flush) begin
+            // NOP: addi $r0 $r0 0 
+            next_IR = 32'b00000000000000000000000000010011;
+        end
+        else begin 
+            // Endian conversion
+            next_IR = IF_Write ? {ICACHE_rdata[7:0], ICACHE_rdata[15:8], ICACHE_rdata[23:16], ICACHE_rdata[31:24]} : IR;
+        end
+    end
     
-    // ID: Endian Conversion
-    assign IR = {ICACHE_rdata[7:0], ICACHE_rdata[15:8], ICACHE_rdata[23:16], ICACHE_rdata[31:24]};
+    // ID:
     assign funct3 = IR[14:12];
     assign opcode = IR[6:0];
 
     // ID: Control signals
-    assign ID_Branch   = (IR[6:0] == 7'b1100011);          // branch
+    assign ID_Branch   = (IR[6:0] == 7'b1100011) & (funct3 == 3'b000);          // branch
+    assign ID_BranchNot= (IR[6:0] == 7'b1100011) & (funct3 == 3'b001);          // branch not
     assign ID_Jal      = (IR[6:0] == 7'b1101111);          // jal
     assign ID_Jalr     = (IR[6:0] == 7'b1100111);          // jalr
     assign ID_MemRead  = (IR[6:0] == 7'b0000011);          // lw
@@ -127,6 +175,15 @@ module RISCV_Pipeline(
                         || (IR[6:0] == 7'b0000011)         // lw
                         || (IR[6:0] == 7'b1101111)         // jal
                         || (IR[6:0] == 7'b1100111);        // jalr
+    assign IF_flush    = (ID_Branch & ID_Equal) | (ID_BranchNot & ~(ID_Equal));
+
+    // ID: Control signals after hazard mux
+    assign ID_ALUSrc_h      = ID_stall ? 0 : ID_ALUSrc;
+    assign ID_ALUOp_h       = ID_stall ? 0 : ID_ALUOp;
+    assign ID_MemWrite_h    = ID_stall ? 0 : ID_MemWrite;
+    assign ID_MemRead_h     = ID_stall ? 0 : ID_MemRead;
+    assign ID_MemtoReg_h    = ID_stall ? 0 : ID_MemtoReg;
+    assign ID_RegWrite_h    = ID_stall ? 0 : ID_RegWrite;
     
     // ID: register file (read)
     always@(*)begin
@@ -179,6 +236,26 @@ module RISCV_Pipeline(
     assign ID_Equal = (ID_din_1 == ID_din_2);
     assign ID_addr = $signed(immgen) + $signed((Jalr ? ID_din_1 : ID_PC));
     
+    // EX: ALU inputs with forwarding unit
+    always@(*) begin
+        EX_din_1 = 0;
+        EX_din_2 = 0;
+        case(ForwardA)
+            ORI: EX_din_1 = EX_din_1_ori;
+            MEM: EX_din_1 = MEM_dout;
+            WB:  EX_din_1 = WB_busRD;
+        endcase
+        // if the 2nd input is from immgen, don't forwarding 
+        if(~EX_ALUSrc) begin    
+            case(ForwardB)
+                ORI: EX_din_2 = EX_din_2_ori;
+                MEM: EX_din_2 = MEM_dout;
+                WB:  EX_din_2 = WB_busRD;
+            endcase
+        end
+        else EX_din_2 = EX_din_2_ori;
+    end
+    
     // EX: ALU
     always@(*) begin
         EX_dout = 0;
@@ -204,6 +281,43 @@ module RISCV_Pipeline(
                         ID_MemWrite ? {{21{IR[31]}}, IR[30:25], IR[11:7]} :
                         {{21{IR[31]}}, IR[30:20] };
 
+    // Forwarding unit
+    always@(*) begin
+        // default
+        ForwardA = ORI;
+        ForwardB = ORI;
+
+        // check MEM stage first because it's more recent result
+        if(MEM_RegWrite & (MEM_RD != 0) & (MEM_RD == EX_RS1)) begin
+            ForwardA = MEM;
+        end 
+        // Then check WB stage
+        else if(WB_RegWrite & (WB_RD != 0) & (WB_RD == EX_RS1)) begin
+            ForwardA = WB;
+        end
+
+        if(MEM_RegWrite & (MEM_RD != 0) & (MEM_RD == EX_RS2)) begin
+            ForwardB = MEM;
+        end 
+        else if(WB_RegWrite & (WB_RD != 0) & (WB_RD == EX_RS2)) begin
+            ForwardB = WB;
+        end
+    end
+
+    // Hazard detection unit
+    always@(*) begin
+        IF_PCWrite = 1; // can write new value to PC
+        IF_Write = 1;   // can write new value to IR
+        ID_stall = 0;
+        // lw and (RD of lw == RS1 or RS2)  (make sure that the RS2 is not immgen)
+        // load use situation occurs
+        if(((EX_RD == ID_RS1) | ((EX_RD == ID_RS2) & (~ID_ALUSrc))) & (EX_MemRead)) begin
+            IF_PCWrite = 0;
+            IF_Write = 0;
+            ID_stall = 1;
+        end
+    end 
+
     // MEM: access data cache
     assign DCACHE_ren = MEM_MemRead;
     assign DCACHE_wen = MEM_MemWrite;
@@ -228,15 +342,17 @@ module RISCV_Pipeline(
     end
 
     // ---------------------- Sequential part ----------------------
-    // PC
+    // PC and instruction
     always@(posedge clk) begin
         if(!rst_n) begin
             IF_PC <= 0;
             ID_PC <= 0;
+            IR    <= 0;
         end
         else begin
             IF_PC <= next_PC;
             ID_PC <= IF_PC;
+            IR    <= next_IR;
         end
     end
     
@@ -257,29 +373,35 @@ module RISCV_Pipeline(
     // control signals
     always@(posedge clk) begin
         if(!rst_n) begin
+            EX_ALUSrc       <= 0;
             EX_ALUOp        <= 0;
             EX_MemWrite     <= 0;
-            MEM_MemWrite    <= 0;
             EX_MemRead      <= 0;
-            MEM_MemRead     <= 0;     
             EX_MemtoReg     <= 0;
-            MEM_MemtoReg    <= 0;
-            WB_MemtoReg     <= 0;
             EX_RegWrite     <= 0;
+            
+            MEM_MemWrite    <= 0;
+            MEM_MemRead     <= 0;     
+            MEM_MemtoReg    <= 0;
             MEM_RegWrite    <= 0;
+            
+            WB_MemtoReg     <= 0;
             WB_RegWrite     <= 0;
         end
         else begin
-            EX_ALUOp        <= ID_ALUOp;
-            EX_MemWrite     <= ID_MemWrite;
+            EX_ALUSrc       <= ID_ALU_h;
+            EX_ALUOp        <= ID_ALUOp_h;
+            EX_MemWrite     <= ID_MemWrite_h;
+            EX_MemRead      <= ID_MemRead_h;
+            EX_MemtoReg     <= ID_MemtoReg_h;
+            EX_RegWrite     <= ID_RegWrite_h;
+            
             MEM_MemWrite    <= EX_MemWrite;
-            EX_MemRead      <= ID_MemRead;
             MEM_MemRead     <= EX_MemRead;     
-            EX_MemtoReg     <= ID_MemtoReg;
             MEM_MemtoReg    <= EX_MemtoReg;
-            WB_MemtoReg     <= MEM_MemtoReg;
-            EX_RegWrite     <= ID_RegWrite;
             MEM_RegWrite    <= EX_RegWrite;
+            
+            WB_MemtoReg     <= MEM_MemtoReg;
             WB_RegWrite     <= MEM_RegWrite;
         end
     end
@@ -287,16 +409,16 @@ module RISCV_Pipeline(
     // ALU-related signals
     always@(posedge clk) begin
         if(!rst_n) begin
-            EX_din_1        <= 0;
-            EX_din_2        <= 0;
+            EX_din_1_ori    <= 0;
+            EX_din_2_ori    <= 0;
             EX_ctrl         <= 0;
             MEM_dout        <= 0;
             MEM_din_2       <= 0;
             WB_dout         <= 0;
         end
         else begin
-            EX_din_1        <= ID_din_1;
-            EX_din_2        <= ID_din_2;
+            EX_din_1_ori    <= ID_din_1;
+            EX_din_2_ori    <= ID_din_2;
             EX_ctrl         <= ID_ctrl;
             MEM_dout        <= EX_dout;
             MEM_din_2       <= EX_din_2;
@@ -310,11 +432,17 @@ module RISCV_Pipeline(
             WB_RD           <= 0;
             MEM_RD          <= 0;
             EX_RD           <= 0;
+            // forwarding unit using
+            EX_RS1          <= 0;
+            EX_RS2          <= 0;
         end
         else begin
             WB_RD           <= MEM_RD;
             MEM_RD          <= EX_RD;
             EX_RD           <= ID_RD;
+            // forwarding unit using
+            EX_RS1          <= ID_RS1;
+            EX_RS2          <= ID_RS2;
         end
     end
 endmodule
