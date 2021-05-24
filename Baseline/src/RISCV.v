@@ -60,8 +60,12 @@ module RISCV_Pipeline(
     
     // PC
     reg     [31:0]  IF_PC;
+    wire    [31:0]  IF_PC_4;
     reg     [31:0]  ID_PC;
+    reg     [31:0]  ID_PC_4;
     reg     [31:0]  next_PC;
+    reg     [31:0]  EX_PC_4;
+    reg     [31:0]  MEM_PC_4;   
 
     // register file
     reg     [31:0]  regfile_w [0:31];  
@@ -91,8 +95,10 @@ module RISCV_Pipeline(
     reg     [31:0]  EX_immgen;
 
     // Branch and Jalr and Jal
+    wire    [31:0]  ID_busRS1_mux, ID_busRS2_mux; // Consider hazard in ID stage
     wire            ID_Equal;
     wire    [31:0]  ID_addr;
+    wire    [31:0]  MEM_dout_mux;
 
     // Forwarding unit
     reg     [1:0]   ForwardA, ForwardB;
@@ -107,8 +113,8 @@ module RISCV_Pipeline(
     wire            IF_flush;
     wire            ID_Branch;          // ID
     wire            ID_BranchNot;       // ID
-    wire            ID_Jalr;            // ID
-    wire            ID_Jal;             // ID
+    wire            ID_Jalr;            // ID->EX->MEM     (to determine we should write PC+4 or ALU result to reg)
+    wire            ID_Jal;             // ID->EX->MEM
     wire            ID_ALUSrc;          // ID->EX
     wire            ID_ALUOp;           // ID->EX
     wire            ID_MemWrite;        // ID->EX->MEM
@@ -124,6 +130,8 @@ module RISCV_Pipeline(
         wire            ID_MemtoReg_h;        // ID->EX->MEM->WB
         wire            ID_RegWrite_h;        // ID->EX->MEM->WB
     
+    reg             EX_Jalr, MEM_Jalr;
+    reg             EX_Jal, MEM_Jal;
     reg             EX_ALUSrc;
     reg             EX_ALUOp;
     reg             EX_MemWrite, MEM_MemWrite;
@@ -138,25 +146,27 @@ module RISCV_Pipeline(
     // keep everthing in the flipflop unchanged
 
     // ---------------------- Combinational part ----------------------
+    
     // ICACHE
     assign ICACHE_ren = 1;
     assign ICACHE_wen = 0;
-    assign ICACHE_addr = IF_PC[31:2];
+    assign ICACHE_addr = (IF_PCWrite & (IF_flush | ID_Jal | ID_Jalr)) ? ID_addr[31:2] : IF_PC[31:2];
     assign ICACHE_wdata = 0;
     
     // PC
+    assign IF_PC_4 = IF_PC + 4;
     always@(*) begin
         // if ICACHE is not ready, keep PC the same
-        if(ICACHE_stall) begin
-            next_PC = IF_PC;
-        end
-        else if(IF_PCWrite) begin
+        if(IF_PCWrite) begin
             // IF_flush = BNE or BEQ
-            if(IF_flush | ID_Jal | ID_Jalr) begin
+            if(IF_flush | ID_Jal | ID_Jalr) begin // jump to another address
                 next_PC = ID_addr;
             end
+            else if (ICACHE_stall)begin
+                next_PC = IF_PC;
+            end
             else begin
-                next_PC = IF_PC + 4;
+                next_PC = IF_PC_4;
             end
         end
         else begin
@@ -166,7 +176,7 @@ module RISCV_Pipeline(
     
     // instruction
     always@(*) begin
-        if(IF_flush | ICACHE_stall) begin
+        if(IF_flush | ICACHE_stall | ID_Jal | ID_Jalr) begin
             // NOP: addi $r0 $r0 0 
             next_IR = 32'b00000000000000000000000000010011;
         end
@@ -181,22 +191,22 @@ module RISCV_Pipeline(
     assign opcode = IR[6:0];
 
     // ID: Control signals
-    assign ID_Branch   = (IR[6:0] == 7'b1100011) & (funct3 == 3'b000);          // branch
-    assign ID_BranchNot= (IR[6:0] == 7'b1100011) & (funct3 == 3'b001);          // branch not
-    assign ID_Jal      = (IR[6:0] == 7'b1101111);          // jal
-    assign ID_Jalr     = (IR[6:0] == 7'b1100111);          // jalr
-    assign ID_MemRead  = (IR[6:0] == 7'b0000011);          // lw
-    assign ID_MemtoReg = ID_MemRead;                          // lw
-    assign ID_ALUOp    = (IR[3:0] == 4'b0011);             // R-type, Itype, beq
-    assign ID_MemWrite = (IR[6:0] == 7'b0100011);          // sw
-    assign ID_ALUSrc   = (IR[6:0] == 7'b0010011)           // I-type(addi, andi...)
-                        || (IR[6:0] == 7'b0000011)         // lw
-                        || (IR[6:0] == 7'b0100011);        // sw
-    assign ID_RegWrite = (IR[6:0] == 7'b0110011)           // R-type
-                        || (IR[6:0] == 7'b0010011)         // I-type(addi, andi...)
-                        || (IR[6:0] == 7'b0000011)         // lw
-                        || (IR[6:0] == 7'b1101111)         // jal
-                        || (IR[6:0] == 7'b1100111);        // jalr
+    assign ID_Branch   = (opcode == 7'b1100011) & (funct3 == 3'b000);          // branch
+    assign ID_BranchNot= (opcode == 7'b1100011) & (funct3 == 3'b001);          // branch not
+    assign ID_Jal      = (opcode == 7'b1101111);          // jal
+    assign ID_Jalr     = (opcode == 7'b1100111);          // jalr
+    assign ID_MemRead  = (opcode == 7'b0000011);          // lw
+    assign ID_MemtoReg = ID_MemRead;                      // lw
+    assign ID_ALUOp    = (opcode[3:0] == 4'b0011);        // R-type, Itype, beq
+    assign ID_MemWrite = (opcode == 7'b0100011);          // sw
+    assign ID_ALUSrc   = (opcode == 7'b0010011)           // I-type(addi, andi...)
+                       | (opcode == 7'b0000011)           // lw
+                       | (opcode == 7'b0100011);          // sw
+    assign ID_RegWrite = (opcode == 7'b0110011)           // R-type
+                       | (opcode == 7'b0010011)           // I-type(addi, andi...)
+                       | (opcode == 7'b0000011)           // lw
+                       | (opcode == 7'b1101111)           // jal
+                       | (opcode == 7'b1100111);          // jalr
     assign IF_flush    = (ID_Branch & ID_Equal) | (ID_BranchNot & ~(ID_Equal));
 
     // ID: Control signals after hazard mux
@@ -209,10 +219,29 @@ module RISCV_Pipeline(
     
     // ID: register file (read)
     always@(*)begin
+        // default
         ID_busRS1 = regfile_r[ID_RS1];
         ID_busRS2 = regfile_r[ID_RS2];
+        // ********* Note that read register also needs forwarding logic ***********
+        
+        // REG hazard: when read, write same register simultaneously
+        //             we should read the "write result" out
+        if(MEM_RegWrite & (MEM_RD != 0) & (MEM_RD == ID_RS1)) begin
+            ID_busRS1 = MEM_dout;
+        end
+        else if(ID_RS1 == WB_RD & WB_RegWrite & WB_RD != 0) begin
+            ID_busRS1 = WB_busRD;
+        end
+        
+        if(MEM_RegWrite & (MEM_RD != 0) & (MEM_RD == ID_RS2)) begin
+            ID_busRS2 = MEM_dout;
+        end 
+        else if(ID_RS2 == WB_RD & WB_RegWrite & WB_RD != 0) begin
+            ID_busRS2 = WB_busRD;
+        end
     end
 
+    
     // ID: register file signals
     assign ID_RS1 = IR[19:15];
     assign ID_RS2 = IR[24:20];
@@ -242,7 +271,7 @@ module RISCV_Pipeline(
                 default: ID_ctrl = 0;
             endcase
         end 
-        else if(opcode == 7'b0000011 || opcode == 7'b0100011) begin
+        else if(opcode == 7'b0000011 | opcode == 7'b0100011) begin
             if(funct3 == 3'b010) begin
                 ID_ctrl = ADD;
             end
@@ -251,12 +280,18 @@ module RISCV_Pipeline(
     end
 
     // ID: Branch and Jalr and Jal
-    assign ID_Equal = (ID_busRS1 == ID_busRS2);
-    assign ID_addr = $signed(ID_immgen) + $signed((ID_Jalr ? ID_busRS1 : ID_PC));
+        // Note that only BNE, BEQ, JAL, JALR will use the data in ID stage
+        // So we may determine whether to forward data from EX stage (after ALU) to ID stage
+
+    assign ID_busRS1_mux = (EX_RD == ID_RS1 & EX_RD != 0 & ~EX_MemtoReg & EX_RegWrite) ? EX_dout : ID_busRS1;
+    assign ID_busRS2_mux = (EX_RD == ID_RS2 & EX_RD != 0 & ~EX_MemtoReg & EX_RegWrite) ? EX_dout : ID_busRS2;
+    
+    assign ID_Equal = (ID_busRS1_mux == ID_busRS2_mux);
+    assign ID_addr = $signed(ID_immgen) + $signed((ID_Jalr ? ID_busRS1_mux : ID_PC));
     
     // ID: immgen
     always@(*) begin
-        if(ID_Branch)   
+        if(ID_Branch | ID_BranchNot)   
             ID_immgen = {{20{IR[31]}}, IR[7], IR[30:25], IR[11:8], 1'b0};
         else if(ID_Jal)
             ID_immgen = {{12{IR[31]}}, IR[19:12], IR[20], IR[30:25], IR[24:21], 1'b0};
@@ -342,6 +377,9 @@ module RISCV_Pipeline(
         end
     end 
 
+    // MEM: mux for Jal, Jalr(choose PC+4 or ALU result)
+    assign MEM_dout_mux = (MEM_Jal | MEM_Jalr) ? MEM_PC_4 : MEM_dout;
+    
     // MEM: access data cache
     assign DCACHE_ren = MEM_MemRead;
     assign DCACHE_wen = MEM_MemWrite;
@@ -360,7 +398,7 @@ module RISCV_Pipeline(
             regfile_w[i] = regfile_r[i];
         end
         
-        if(WB_RegWrite && (WB_RD != 0)) begin
+        if(WB_RegWrite & (WB_RD != 0)) begin
             regfile_w[WB_RD] = WB_busRD;
         end
     end
@@ -372,11 +410,17 @@ module RISCV_Pipeline(
             IF_PC <= 0;
             ID_PC <= 0;
             IR    <= 0;
+            ID_PC_4     <= 0;
+            EX_PC_4     <= 0;
+            MEM_PC_4    <= 0;
         end
         else begin
             IF_PC <= DCACHE_stall ? IF_PC : next_PC;
             ID_PC <= DCACHE_stall ? ID_PC : IF_PC;
             IR    <= DCACHE_stall ? IR : next_IR;
+            ID_PC_4     <= DCACHE_stall ? ID_PC_4 : IF_PC_4;
+            EX_PC_4     <= DCACHE_stall ? EX_PC_4 : ID_PC_4;
+            MEM_PC_4    <= DCACHE_stall ? MEM_PC_4 : EX_PC_4;
         end
     end
     
@@ -397,6 +441,8 @@ module RISCV_Pipeline(
     // control signals
     always@(posedge clk) begin
         if(!rst_n) begin
+            EX_Jalr         <= 0;
+            EX_Jal          <= 0;
             EX_ALUSrc       <= 0;
             EX_ALUOp        <= 0;
             EX_MemWrite     <= 0;
@@ -404,6 +450,8 @@ module RISCV_Pipeline(
             EX_MemtoReg     <= 0;
             EX_RegWrite     <= 0;
             
+            MEM_Jalr        <= 0;
+            MEM_Jal         <= 0;
             MEM_MemWrite    <= 0;
             MEM_MemRead     <= 0;     
             MEM_MemtoReg    <= 0;
@@ -413,6 +461,8 @@ module RISCV_Pipeline(
             WB_RegWrite     <= 0;
         end
         else begin
+            EX_Jalr         <= DCACHE_stall ? EX_Jalr : ID_Jalr;
+            EX_Jal          <= DCACHE_stall ? EX_Jal : ID_Jal;
             EX_ALUSrc       <= DCACHE_stall ? EX_ALUSrc : ID_ALUSrc_h;
             EX_ALUOp        <= DCACHE_stall ? EX_ALUOp : ID_ALUOp_h;
             EX_MemWrite     <= DCACHE_stall ? EX_MemWrite : ID_MemWrite_h;
@@ -420,6 +470,8 @@ module RISCV_Pipeline(
             EX_MemtoReg     <= DCACHE_stall ? EX_MemtoReg : ID_MemtoReg_h;
             EX_RegWrite     <= DCACHE_stall ? EX_RegWrite : ID_RegWrite_h;
             
+            MEM_Jalr        <= DCACHE_stall ? MEM_Jalr : EX_Jalr;
+            MEM_Jal         <= DCACHE_stall ? MEM_Jal : EX_Jal;
             MEM_MemWrite    <= DCACHE_stall ? MEM_MemWrite : EX_MemWrite;
             MEM_MemRead     <= DCACHE_stall ? MEM_MemRead : EX_MemRead;     
             MEM_MemtoReg    <= DCACHE_stall ? MEM_MemtoReg : EX_MemtoReg;
@@ -451,7 +503,7 @@ module RISCV_Pipeline(
             MEM_busRS2       <= DCACHE_stall ? MEM_busRS2 : EX_busRS2;
             
             // write_back -> no need to stall 
-            WB_dout         <= MEM_dout;
+            WB_dout         <= MEM_dout_mux;
         end
     end
 
