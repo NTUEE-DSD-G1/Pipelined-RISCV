@@ -58,9 +58,9 @@ module RISCV_Pipeline(
     // ==============================================================================
     //                        parameter for Forwarding unit
     // ==============================================================================
-    parameter ORI   = 2'b00;    // pass data from regfile to ALU
-    parameter MEM   = 2'b01;    // pass data from MEM stage (ALU result) to ALU
-    parameter WB    = 2'b10;    // pass data from WB stage (maybe ALU result or mem result) to ALU
+    parameter EX_FORWARD    = 2'b00;    // pass data from EX_stage bus line to ALU
+    parameter MEM_FORWARD   = 2'b01;    // pass data from MEM stage (ALU result) to ALU
+    parameter WB_FORWARD    = 2'b10;    // pass data from WB stage (maybe ALU result or mem result) to ALU
     
     // ==============================================================================
     //                             Wire/Reg declaration
@@ -119,7 +119,7 @@ module RISCV_Pipeline(
     reg             ID_stall;      
 
     // Control signals
-    wire            IF_flush;
+    wire            ID_Branch_Jump;
     wire            ID_Branch;          // ID
     wire            ID_BranchNot;       // ID
     wire            ID_Jalr;            // ID->EX->MEM     (to determine we should write PC+4 or ALU result to reg)
@@ -162,7 +162,7 @@ module RISCV_Pipeline(
     // ICACHE
     assign ICACHE_ren = 1;
     assign ICACHE_wen = 0;
-    assign ICACHE_addr = (IF_PCWrite & (IF_flush | ID_Jal | ID_Jalr)) ? ID_addr[31:2] : IF_PC[31:2];
+    assign ICACHE_addr = (IF_PCWrite & (ID_Branch_Jump | ID_Jal | ID_Jalr)) ? ID_addr[31:2] : IF_PC[31:2];
     assign ICACHE_wdata = 0;
     
     // PC
@@ -170,11 +170,11 @@ module RISCV_Pipeline(
     always@(*) begin
         // if ICACHE is not ready, keep PC the same
         if(IF_PCWrite) begin
-            // IF_flush = BNE or BEQ
-            if(IF_flush | ID_Jal | ID_Jalr) begin // jump to another address
+            // ID_Branch_Jump = BNE or BEQ
+            if(ID_Branch_Jump | ID_Jal | ID_Jalr) begin // jump to another address
                 next_IF_PC = ID_addr;
             end
-            else if (ICACHE_stall)begin
+            else if(ICACHE_stall) begin
                 next_IF_PC = IF_PC;
             end
             else begin
@@ -184,15 +184,15 @@ module RISCV_Pipeline(
         else begin
             next_IF_PC = IF_PC;
         end
-    end 
+    end
     
     // instruction
     always@(*) begin
-        if(IF_flush | ICACHE_stall | ID_Jal | ID_Jalr) begin
+        if(ID_Branch_Jump | ICACHE_stall | ID_Jal | ID_Jalr) begin
             // NOP: addi $r0 $r0 0 
             next_IR = 32'b00000000000000000000000000010011;
         end
-        else begin 
+        else begin
             // Endian conversion
             next_IR = IF_IRWrite ? {ICACHE_rdata[7:0], ICACHE_rdata[15:8], ICACHE_rdata[23:16], ICACHE_rdata[31:24]} : IR;
         end
@@ -219,9 +219,9 @@ module RISCV_Pipeline(
                        | (opcode == 7'b0000011)           // lw
                        | (opcode == 7'b1101111)           // jal
                        | (opcode == 7'b1100111);          // jalr
-    assign IF_flush    = (ID_Branch & ID_Equal) | (ID_BranchNot & ~(ID_Equal));
+    assign ID_Branch_Jump    = (ID_Branch & ID_Equal) | (ID_BranchNot & ~(ID_Equal));
 
-    // ID: Control signals after hazard mux
+    // ID: Control signals after hazard mux (maybe useless)
     assign ID_ALUSrc_h      = ID_stall ? 0 : ID_ALUSrc;
     assign ID_ALUOp_h       = ID_stall ? 0 : ID_ALUOp;
     assign ID_MemWrite_h    = ID_stall ? 0 : ID_MemWrite;
@@ -250,21 +250,21 @@ module RISCV_Pipeline(
     // ID: register file signals
     assign ID_RS1 = IR[19:15];
     assign ID_RS2 = IR[24:20];
-    assign ID_RD = IR[11:7];
+    assign ID_RD  = IR[11:7];
     
     always@(*) begin
         ID_ctrl = 0;
-        if(opcode == 7'b0110011) begin
+        if(opcode == 7'b0110011) begin // R-type
             case(funct3)
                 3'b000: ID_ctrl = IR[30] ? SUB : ADD;
                 3'b010: ID_ctrl = SLT;
                 3'b100: ID_ctrl = XOR;
                 3'b110: ID_ctrl = OR;
-                3'b111: ID_ctrl = AND; 
+                3'b111: ID_ctrl = AND;
                 default: ID_ctrl = 0;
             endcase
         end
-        else if(opcode == 7'b0010011) begin
+        else if(opcode == 7'b0010011) begin // I-type (addi ...)
             case(funct3)
                 3'b000: ID_ctrl = ADD;
                 3'b001: ID_ctrl = SLL;
@@ -276,7 +276,7 @@ module RISCV_Pipeline(
                 default: ID_ctrl = 0;
             endcase
         end 
-        else if(opcode == 7'b0000011 | opcode == 7'b0100011) begin
+        else if(opcode == 7'b0000011 | opcode == 7'b0100011) begin // lw sw
             if(funct3 == 3'b010) begin
                 ID_ctrl = ADD;
             end
@@ -306,7 +306,7 @@ module RISCV_Pipeline(
         
         // The data going to be written to reg may be PC+4 or result from ALU, check it 
         if(EX_RD == ID_RS1 & EX_RD != 0 & ~EX_MemtoReg & EX_RegWrite) begin
-            ID_busRS1_mux = (EX_Jal | EX_Jalr) ? EX_PC_4 : EX_dout; 
+            ID_busRS1_mux = (EX_Jal | EX_Jalr) ? EX_PC_4 : EX_dout;
         end
         else if(MEM_RD == ID_RS1 & MEM_RD != 0 & ~MEM_MemtoReg & MEM_RegWrite) begin
             ID_busRS1_mux = MEM_dout_mux;
@@ -342,15 +342,15 @@ module RISCV_Pipeline(
         EX_din_1 = EX_busRS1;
         EX_din_2 = 0;
         case(ForwardA)
-            ORI: EX_din_1 = EX_busRS1;
-            MEM: EX_din_1 = MEM_dout;
-            WB:  EX_din_1 = WB_busRD;
+            EX_FORWARD:  EX_din_1 = EX_busRS1;
+            MEM_FORWARD: EX_din_1 = MEM_dout;
+            WB_FORWARD:  EX_din_1 = WB_busRD;
         endcase
-        // if the 2nd input is from immgen, don't forwarding  
+        // if the 2nd input is from immgen, don't forwarding
         case(ForwardB)
-            ORI: EX_din_2 = EX_ALUSrc ? EX_immgen : EX_busRS2;
-            MEM: EX_din_2 = MEM_dout;
-            WB:  EX_din_2 = WB_busRD;
+            EX_FORWARD:  EX_din_2 = EX_ALUSrc ? EX_immgen : EX_busRS2;
+            MEM_FORWARD: EX_din_2 = MEM_dout;
+            WB_FORWARD:  EX_din_2 = WB_busRD;
         endcase
     end
     
@@ -377,29 +377,29 @@ module RISCV_Pipeline(
     // Forwarding unit
     always@(*) begin
         // default
-        ForwardA = ORI;
-        ForwardB = ORI;
+        ForwardA = EX_FORWARD;
+        ForwardB = EX_FORWARD;
 
         // check MEM stage first because it's more recent result
         if(MEM_RegWrite & (MEM_RD != 0) & (MEM_RD == EX_RS1)) begin
-            ForwardA = MEM;
+            ForwardA = MEM_FORWARD;
         end 
         // Then check WB stage
         else if(WB_RegWrite & (WB_RD != 0) & (WB_RD == EX_RS1)) begin
-            ForwardA = WB;
+            ForwardA = WB_FORWARD;
         end
 
         if(MEM_RegWrite & (MEM_RD != 0) & (MEM_RD == EX_RS2)) begin
-            ForwardB = MEM;
+            ForwardB = MEM_FORWARD;
         end 
         else if(WB_RegWrite & (WB_RD != 0) & (WB_RD == EX_RS2)) begin
-            ForwardB = WB;
+            ForwardB = WB_FORWARD;
         end
     end
 
     // Hazard detection unit
     always@(*) begin
-        IF_PCWrite = 1; // can write new value to PC
+        IF_PCWrite = 1;   // can write new value to PC
         IF_IRWrite = 1;   // can write new value to IR
         ID_stall = 0;
         // lw and (RD of lw == RS1 or RS2)  (make sure that the RS2 is not immgen)

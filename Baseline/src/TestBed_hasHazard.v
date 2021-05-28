@@ -115,7 +115,7 @@ module	TestBed(
 				$display("\n (T_T) FAIL!! The simulation result is FAIL!!! there were %d errors at all.\n", error_num);
 				$display("============================================================================");
 			end
-			 else begin 
+			else begin 
 				$display("============================================================================");
 				$display("\n \\(^o^)/ CONGRATULATIONS!!  The simulation result is PASS!!!\n");
 				$display("============================================================================");
