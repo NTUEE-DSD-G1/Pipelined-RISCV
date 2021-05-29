@@ -1,4 +1,7 @@
 // Top module of your design, you cannot modify this module!!
+`include "Icache.v"
+`include "Dcache.v"
+`include "RISCV.v"
 
 module CHIP (	clk,
 				rst_n,
@@ -93,7 +96,7 @@ wire [31:0] DCACHE_rdata;
 	);
 	
 
-	cache D_cache(
+	Dcache D_cache(
         .clk        (clk)         ,
         .proc_reset (~rst_n)      ,
         .proc_read  (DCACHE_ren)  ,
@@ -110,7 +113,7 @@ wire [31:0] DCACHE_rdata;
         .mem_ready  (mem_ready_D)
 	);
 
-	cache I_cache(
+	Icache I_cache(
         .clk        (clk)         ,
         .proc_reset (~rst_n)      ,
         .proc_read  (ICACHE_ren)  ,

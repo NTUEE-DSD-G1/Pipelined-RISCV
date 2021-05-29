@@ -1,5 +1,4 @@
-// Write-through / FIFO / 2 way cache
-module cache(
+module Icache(
     clk,
     proc_reset,
     proc_read,
@@ -15,7 +14,10 @@ module cache(
     mem_wdata,
     mem_ready
 );
-    
+// Improvement:
+// (1) Sequential Read Preload
+// (2) Write back policy (wont waste time to write useless data)
+
 //==== input/output definition ============================
     input          clk;
     // processor interface
@@ -39,7 +41,7 @@ module cache(
     // state parameters
     parameter REQUEST       = 3'b000;
     parameter READMEM       = 3'b001;
-    parameter WRITECACHE    = 3'b010;
+    parameter PRELOAD       = 3'b010;
     parameter WRITEMEM      = 3'b011;
     
     //==== wire/reg definition ================================
@@ -64,7 +66,13 @@ module cache(
     wire        hit;
     reg [31:0] target_cache_data1, target_cache_data2, target_mem_data; 
 
-    wire ReadHit, ReadMiss, WriteHit, WriteMiss;
+    wire ReadHit, ReadMiss;
+
+    //==== additional wire/reg definition ================================
+    wire [25:0] preload_tag;
+    wire [1:0] preload_set_num;
+    wire [27:0] preload_addr;
+    wire [2:0] preload_index;
 
     //==== combinational circuit ==============================
     assign set_num = proc_addr[3:2];
@@ -76,8 +84,12 @@ module cache(
     
     assign ReadHit = proc_read && hit;
     assign ReadMiss = proc_read && !hit;
-    assign WriteHit = proc_write && hit;
-    assign WriteMiss = proc_write && !hit;
+
+    //=========================================================
+    assign preload_tag = (set_num == 2'b11) ? (tag + 1) : tag;
+    assign preload_set_num = set_num + 1;
+    assign preload_addr = {preload_tag, preload_set_num};
+    assign preload_index = {preload_set_num, 1'b0};
 
     always@(*) begin
         case(set_num)
@@ -160,69 +172,8 @@ module cache(
                     mem_addr = proc_addr[29:2];
                     mem_read = 1;
                 end
-
-                // write hit -> stall, update cache_data and set the write mode of memory
-                if(WriteHit) begin
-                    proc_stall = 1;
-                    if(hit1) begin
-                        next_cache_valid[index1] = 1;
-                        next_cache_tag[index1] = tag;
-                    end
-                    else begin
-                        next_cache_valid[index2] = 1;
-                        next_cache_tag[index2] = tag;
-                    end 
-                    
-                    case(offset)
-                        3: begin
-                            if(hit1)    next_cache_data[index1][127:96] = proc_wdata;
-                            else        next_cache_data[index2][127:96] = proc_wdata;
-                        end
-                        2: begin
-                            if(hit1)    next_cache_data[index1][95:64] = proc_wdata;
-                            else        next_cache_data[index2][95:64] = proc_wdata;
-                        end
-                        1: begin
-                            if(hit1)    next_cache_data[index1][63:32] = proc_wdata;
-                            else        next_cache_data[index2][63:32] = proc_wdata;
-                        end
-                        0: begin
-                            if(hit1)    next_cache_data[index1][31:0] = proc_wdata;
-                            else        next_cache_data[index2][31:0] = proc_wdata;
-                        end
-                    endcase
-
-                    // memory interface
-                    mem_write = 1;
-                    case(offset)
-                        3: begin
-                            if(hit1)    mem_wdata = {proc_wdata, cache_data[index1][95:0]}; 
-                            else        mem_wdata = {proc_wdata, cache_data[index2][95:0]}; 
-                        end
-                        2: begin
-                            if(hit1)    mem_wdata = {cache_data[index1][127:96], proc_wdata, cache_data[index1][63:0]};
-                            else        mem_wdata = {cache_data[index2][127:96], proc_wdata, cache_data[index2][63:0]};
-                        end
-                        1: begin
-                            if(hit1)    mem_wdata = {cache_data[index1][127:64], proc_wdata, cache_data[index1][31:0]};
-                            else        mem_wdata = {cache_data[index2][127:64], proc_wdata, cache_data[index2][31:0]};
-                        end
-                        0: begin
-                            if(hit1)    mem_wdata = {cache_data[index1][127:32], proc_wdata};
-                            else        mem_wdata = {cache_data[index2][127:32], proc_wdata};
-                        end
-                    endcase
-                end
-
-                // write miss -> stall and set the read mode of memory
-                if(WriteMiss) begin
-                    proc_stall = 1; 
-                    // memory interface
-                    mem_read = 1;
-                    mem_addr = proc_addr[29:2];
-                end
             end
-            
+
             READMEM: begin
                 // default: set the read mode of memory
                 mem_addr = proc_addr[29:2];
@@ -250,35 +201,29 @@ module cache(
                         proc_rdata = target_mem_data;
                         next_cache_data[index1] = mem_rdata;
                     end
-                    if(WriteMiss) begin
-                        case(offset)
-                            3: next_cache_data[index1] = {proc_wdata, mem_rdata[95:0]}; 
-                            2: next_cache_data[index1] = {mem_rdata[127:96], proc_wdata, mem_rdata[63:0]};  
-                            1: next_cache_data[index1] = {mem_rdata[127:64], proc_wdata, mem_rdata[31:0]};
-                            0: next_cache_data[index1] = {mem_rdata[127:32], proc_wdata};
-                        endcase
-                    end
                 end
             end
             
-            WRITEMEM: begin
-                // default: stall and set the write mode of memory
-                proc_stall = 1;
-                mem_write = 1;
-                mem_wdata = WriteHit ? (hit1 ? cache_data[index1] : cache_data[index2]) : cache_data[index1];
-                mem_addr = proc_addr[29:2];
+            // PRELOAD: begin
+            //     mem_read = 1;
+            //     mem_addr = preload_addr;
+            //     proc_stall = 1;
                 
-                // when mem ready (come from writehit), cancel the write mode
-                // when mem ready (come from writemiss), cancel the write mode and update the cache data
-                if(mem_ready) begin
-                    mem_addr = 0;
-                    mem_write = 0;
-                    mem_wdata = 0;
-                    proc_stall = 0;
-                end
-            end
-            default: begin
-            end
+            //     if(preload_count > 1) begin
+            //         proc_stall = 0;
+            //         proc_rdata = hit1 ? target_cache_data1 : target_cache_data2;
+            //     end
+                
+            //     if(preload_count > 4) begin
+            //         mem_read = 0;
+            //         mem_addr = 0;
+            //         next_cache_data[preload_index] = mem_rdata;
+            //         next_cache_tag[preload_index] = preload_tag;
+            //         next_cache_valid[preload_index] = 1;
+            //         next_preload_count = 0;
+            //     end
+                
+            // end
         endcase
     end
 
@@ -288,19 +233,12 @@ module cache(
         case(state)
             REQUEST: begin
                 // read hit -> remain REQUEST
+                if(ReadHit) begin
+                    next_state = REQUEST;
+                end
                 
                 // read_miss -> go to READMEM
                 if(ReadMiss) begin
-                    next_state = READMEM;
-                end
-
-                // write hit -> go to WRITEMEM
-                if(WriteHit) begin
-                    next_state = WRITEMEM;
-                end
-
-                // write miss -> goto READMEM then WRITEMEM
-                if(WriteMiss) begin
                     next_state = READMEM;
                 end
             end
@@ -309,21 +247,16 @@ module cache(
                 // when mem ready (come from readmiss), go back to REQUEST
                 // when mem ready (come from writemiss), go to WRITEMEM
                 if(mem_ready) begin
-                    if(ReadMiss) begin
-                        next_state = REQUEST;
-                    end
-                    else if(WriteMiss) begin
-                        next_state = WRITEMEM;
-                    end
-                end
-            end
-           
-            WRITEMEM: begin 
-                // go back to REQUEST
-                if(mem_ready) begin
                     next_state = REQUEST;
                 end
             end
+
+            // PRELOAD: begin
+            //     if(preload_count > 4) begin
+            //         next_state = REQUEST;
+            //     end
+            // end
+
             default: begin
                 next_state = state;
             end
