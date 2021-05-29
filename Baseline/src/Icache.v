@@ -14,65 +14,62 @@ module Icache(
     mem_wdata,
     mem_ready
 );
-// Improvement:
-// (1) Sequential Read Preload
-// (2) Write back policy (wont waste time to write useless data)
+
 
 //==== input/output definition ============================
-    input          clk;
+    input               clk;
     // processor interface
-    input          proc_reset;
-    input          proc_read, proc_write;
-    input   [29:0] proc_addr;   // proc_addr[1:0] is the offset
-                                // proc_addr[29:2] is the mem_addr when accessing the memory
-                                // Use proc_addr[3:2] as the set number of the cache
-                                // Use proc_addr[29:4] as the tag of the cache
-    input   [31:0] proc_wdata;
-    output reg         proc_stall;
-    output reg  [31:0] proc_rdata;
+    input               proc_reset;
+    input               proc_read, proc_write;
+    input       [29:0]  proc_addr;      // proc_addr[1:0] is the offset
+                                        // proc_addr[29:2] is the mem_addr when accessing the memory
+                                        // Use proc_addr[3:2] as the set number of the cache
+                                        // Use proc_addr[29:4] as the tag of the cache
+    input       [31:0]  proc_wdata;
+    output reg          proc_stall;
+    output reg  [31:0]  proc_rdata;
     
     // memory interface
-    input  [127:0] mem_rdata;
-    input          mem_ready;
-    output reg         mem_read, mem_write;
-    output reg [27:0] mem_addr;
-    output reg [127:0] mem_wdata;
+    input       [127:0] mem_rdata;
+    input               mem_ready;
+    output reg          mem_read, mem_write;
+    output reg [27:0]   mem_addr;
+    output reg [127:0]  mem_wdata;
 
     // state parameters
     parameter REQUEST       = 3'b000;
     parameter READMEM       = 3'b001;
     parameter PRELOAD       = 3'b010;
-    parameter WRITEMEM      = 3'b011;
     
     //==== wire/reg definition ================================
     integer i;
     
     // the storage of the cache (8 blocks, each with 4 words (128-bits))
-    reg [127:0] cache_data      [0:7]; 
-    reg [127:0] next_cache_data [0:7];  
-    reg [24:0]  cache_tag       [0:7];
-    reg [24:0]  next_cache_tag  [0:7];
-    reg         cache_valid     [0:7];
-    reg         next_cache_valid[0:7];
+    reg  [127:0] cache_data         [0:7]; 
+    reg  [127:0] next_cache_data    [0:7];  
+    reg  [24:0]  cache_tag          [0:7];
+    reg  [24:0]  next_cache_tag     [0:7];
+    reg          cache_valid        [0:7];
+    reg          next_cache_valid   [0:7];
 
     // state
-    reg [2:0]   state, next_state;
+    reg  [2:0]   state, next_state;
     
     wire [1:0]  set_num;
-    reg [2:0]  index1, index2;
-    wire hit1, hit2;
+    reg  [2:0]  index1, index2;
+    wire        hit1, hit2;
     wire [25:0] tag;
     wire [1:0]  offset;
     wire        hit;
-    reg [31:0] target_cache_data1, target_cache_data2, target_mem_data; 
+    reg  [31:0] target_cache_data1, target_cache_data2, target_mem_data; 
 
-    wire ReadHit, ReadMiss;
+    wire        ReadHit, ReadMiss;
 
     //==== additional wire/reg definition ================================
     wire [25:0] preload_tag;
-    wire [1:0] preload_set_num;
+    wire [1:0]  preload_set_num;
     wire [27:0] preload_addr;
-    wire [2:0] preload_index;
+    wire [2:0]  preload_index;
 
     //==== combinational circuit ==============================
     assign set_num = proc_addr[3:2];
@@ -163,6 +160,12 @@ module Icache(
             REQUEST: begin
                 // read hit -> directly return the data
                 if(ReadHit) begin
+                    // ========================================================================
+                    // Prefetch_strategy: Set memory in read mode when sequentially HIT appears
+                    // ========================================================================
+                    mem_read = 1;
+                    mem_addr = preload_addr;
+
                     proc_rdata = hit1 ? target_cache_data1 : target_cache_data2;
                 end
                 
@@ -181,18 +184,21 @@ module Icache(
                 proc_stall = 1;
                 // when mem ready (come from readmiss), cancel the read mode, update the cache data, tag 
                 // and return the target data (read from memory)
-                // when mem ready (come from writemiss), cancel the read mode, update the cache data, tag
                 if(mem_ready) begin
-                    mem_read = 0;
-                    mem_addr = 0;
+                    
+                    // ========================================================================
+                    // Prefetch_strategy: Set memory in read mode when sequentially HIT appears
+                    // ========================================================================
+                    mem_read = 1;
+                    mem_addr = preload_addr;
                     
                     // replace cache strategy
                     // First move the data to index2 in a set
                     next_cache_valid[index2] = next_cache_valid[index1];
                     next_cache_tag[index2] = next_cache_tag[index1];
                     next_cache_data[index2] = next_cache_data[index1];
+                    
                     // Then write the new data to the index1
-                    // As a result index1 acts as the most recently used block
                     next_cache_valid[index1] = 1;
                     next_cache_tag[index1] = tag;
                     
@@ -204,26 +210,6 @@ module Icache(
                 end
             end
             
-            // PRELOAD: begin
-            //     mem_read = 1;
-            //     mem_addr = preload_addr;
-            //     proc_stall = 1;
-                
-            //     if(preload_count > 1) begin
-            //         proc_stall = 0;
-            //         proc_rdata = hit1 ? target_cache_data1 : target_cache_data2;
-            //     end
-                
-            //     if(preload_count > 4) begin
-            //         mem_read = 0;
-            //         mem_addr = 0;
-            //         next_cache_data[preload_index] = mem_rdata;
-            //         next_cache_tag[preload_index] = preload_tag;
-            //         next_cache_valid[preload_index] = 1;
-            //         next_preload_count = 0;
-            //     end
-                
-            // end
         endcase
     end
 
@@ -245,17 +231,10 @@ module Icache(
             
             READMEM: begin
                 // when mem ready (come from readmiss), go back to REQUEST
-                // when mem ready (come from writemiss), go to WRITEMEM
                 if(mem_ready) begin
                     next_state = REQUEST;
                 end
             end
-
-            // PRELOAD: begin
-            //     if(preload_count > 4) begin
-            //         next_state = REQUEST;
-            //     end
-            // end
 
             default: begin
                 next_state = state;
