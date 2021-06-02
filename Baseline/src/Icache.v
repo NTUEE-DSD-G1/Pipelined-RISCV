@@ -165,7 +165,6 @@ module Icache(
                     // ========================================================================
                     mem_read = 1;
                     mem_addr = preload_addr;
-
                     proc_rdata = hit1 ? target_cache_data1 : target_cache_data2;
                 end
                 
@@ -194,9 +193,9 @@ module Icache(
                     
                     // replace cache strategy
                     // First move the data to index2 in a set
-                    next_cache_valid[index2] = next_cache_valid[index1];
-                    next_cache_tag[index2] = next_cache_tag[index1];
-                    next_cache_data[index2] = next_cache_data[index1];
+                    next_cache_valid[index2] = cache_valid[index1];
+                    next_cache_tag[index2] = cache_tag[index1];
+                    next_cache_data[index2] = cache_data[index1];
                     
                     // Then write the new data to the index1
                     next_cache_valid[index1] = 1;

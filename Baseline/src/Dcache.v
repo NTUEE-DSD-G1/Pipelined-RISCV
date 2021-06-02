@@ -1,4 +1,3 @@
-// Write-through / FIFO / 2 way cache
 module Dcache(
     clk,
     proc_reset,
@@ -15,7 +14,10 @@ module Dcache(
     mem_wdata,
     mem_ready
 );
-    
+// Improvement:
+// (1) Sequential Read Preload
+// (2) Write back policy (wont waste time to write useless data)
+
 //==== input/output definition ============================
     input          clk;
     // processor interface
@@ -37,10 +39,9 @@ module Dcache(
     output reg [127:0] mem_wdata;
 
     // state parameters
-    parameter REQUEST       = 3'b000;
-    parameter READMEM       = 3'b001;
-    parameter WRITECACHE    = 3'b010;
-    parameter WRITEMEM      = 3'b011;
+    parameter REQUEST       = 2'b00;
+    parameter READMEM       = 2'b01;
+    parameter WRITEMEM      = 2'b10;
     
     //==== wire/reg definition ================================
     integer i;
@@ -52,9 +53,11 @@ module Dcache(
     reg [24:0]  next_cache_tag  [0:7];
     reg         cache_valid     [0:7];
     reg         next_cache_valid[0:7];
+    reg         cache_dirty     [0:7];
+    reg         next_cache_dirty[0:7];
 
     // state
-    reg [2:0]   state, next_state;
+    reg [1:0]   state, next_state;
     
     wire [1:0]  set_num;
     reg [2:0]  index1, index2;
@@ -65,6 +68,17 @@ module Dcache(
     reg [31:0] target_cache_data1, target_cache_data2, target_mem_data; 
 
     wire ReadHit, ReadMiss, WriteHit, WriteMiss;
+
+    //==== additional wire/reg definition ================================
+    // wire preload_valid;
+    // reg [31:0] run_count, next_run_count; 
+    // reg [3:0] preload_count, next_preload_count; 
+    // wire [25:0] preload_tag;
+    // wire [1:0] preload_set_num;
+    // wire [27:0] preload_addr;
+    // wire [2:0] preload_index;
+
+    wire WriteBack;
 
     //==== combinational circuit ==============================
     assign set_num = proc_addr[3:2];
@@ -78,6 +92,14 @@ module Dcache(
     assign ReadMiss = proc_read && !hit;
     assign WriteHit = proc_write && hit;
     assign WriteMiss = proc_write && !hit;
+    assign WriteBack = cache_dirty[index2] && cache_valid[index2];
+
+    //=========================================================
+    // assign preload_tag = (set_num == 2'b11) ? (tag + 1) : tag;
+    // assign preload_set_num = set_num + 1;
+    // assign preload_addr = {preload_tag, preload_set_num};
+    // assign preload_index = {preload_set_num, 1'b0};
+    // assign preload_valid = (run_count < 2051) ? 1'b1 : 1'b0;
 
     always@(*) begin
         case(set_num)
@@ -137,7 +159,10 @@ module Dcache(
             next_cache_data[i] = cache_data[i];
             next_cache_tag[i] = cache_tag[i];
             next_cache_valid[i] = cache_valid[i];
+            next_cache_dirty[i] = cache_dirty[i];
         end
+        // next_run_count = run_count + 1;
+        // next_preload_count = preload_count;
         
         // default value (output)
         proc_stall = 0;
@@ -151,19 +176,33 @@ module Dcache(
             REQUEST: begin
                 // read hit -> directly return the data
                 if(ReadHit) begin
-                    proc_rdata = hit1 ? target_cache_data1 : target_cache_data2;
+                    // if(preload_valid) begin
+                    //     proc_stall = 1;
+                    //     next_preload_count = 1;
+                    // end
+                    // else begin
+                        proc_rdata = hit1 ? target_cache_data1 : target_cache_data2;
+                    // end
                 end
                 
                 // read_miss -> stall and set the read mode of memory
                 if(ReadMiss) begin
                     proc_stall = 1;
-                    mem_addr = proc_addr[29:2];
-                    mem_read = 1;
+                    
+                    if(WriteBack) begin
+                        mem_addr = {cache_tag[index2], index2[2:1]};
+                        mem_wdata = cache_data[index2];
+                        mem_write = 1;
+                    end
+                    else begin
+                        mem_addr = proc_addr[29:2];
+                        mem_read = 1;
+                    end
                 end
 
                 // write hit -> stall, update cache_data and set the write mode of memory
                 if(WriteHit) begin
-                    proc_stall = 1;
+                    proc_stall = 0;
                     if(hit1) begin
                         next_cache_valid[index1] = 1;
                         next_cache_tag[index1] = tag;
@@ -175,51 +214,62 @@ module Dcache(
                     
                     case(offset)
                         3: begin
-                            if(hit1)    next_cache_data[index1][127:96] = proc_wdata;
-                            else        next_cache_data[index2][127:96] = proc_wdata;
+                            if(hit1 && (cache_data[index1][127:96] != proc_wdata)) begin
+                                next_cache_data[index1][127:96] = proc_wdata;
+                                next_cache_dirty[index1] = 1;
+                            end
+                            
+                            else if(hit2 && (cache_data[index2][127:96] != proc_wdata)) begin
+                                next_cache_data[index2][127:96] = proc_wdata;
+                                next_cache_dirty[index2] = 1;
+                            end
                         end
                         2: begin
-                            if(hit1)    next_cache_data[index1][95:64] = proc_wdata;
-                            else        next_cache_data[index2][95:64] = proc_wdata;
+                            if(hit1 && (cache_data[index1][95:64] != proc_wdata)) begin    
+                                next_cache_data[index1][95:64] = proc_wdata;
+                                next_cache_dirty[index1] = 1;
+                            end
+                            else if(hit2 && (cache_data[index2][95:64] != proc_wdata)) begin    
+                                next_cache_data[index2][95:64] = proc_wdata;
+                                next_cache_dirty[index2] = 1;
+                            end 
                         end
                         1: begin
-                            if(hit1)    next_cache_data[index1][63:32] = proc_wdata;
-                            else        next_cache_data[index2][63:32] = proc_wdata;
+                            if(hit1 && (cache_data[index1][63:32] != proc_wdata)) begin  
+                                next_cache_data[index1][63:32] = proc_wdata;
+                                next_cache_dirty[index1] = 1;
+                            end
+                            else if(hit2 && (cache_data[index2][63:32] != proc_wdata)) begin  
+                                next_cache_data[index2][63:32] = proc_wdata;
+                                next_cache_dirty[index2] = 1;
+                            end
                         end
                         0: begin
-                            if(hit1)    next_cache_data[index1][31:0] = proc_wdata;
-                            else        next_cache_data[index2][31:0] = proc_wdata;
+                            if(hit1 && (cache_data[index1][31:0] != proc_wdata)) begin  
+                                next_cache_data[index1][31:0] = proc_wdata;
+                                next_cache_dirty[index1] = 1;
+                            end
+                            else if(hit2 && (cache_data[index2][31:0] != proc_wdata)) begin  
+                                next_cache_data[index2][31:0] = proc_wdata;
+                                next_cache_dirty[index2] = 1;
+                            end
                         end
-                    endcase
-
-                    // memory interface
-                    mem_write = 1;
-                    case(offset)
-                        3: begin
-                            if(hit1)    mem_wdata = {proc_wdata, cache_data[index1][95:0]}; 
-                            else        mem_wdata = {proc_wdata, cache_data[index2][95:0]}; 
-                        end
-                        2: begin
-                            if(hit1)    mem_wdata = {cache_data[index1][127:96], proc_wdata, cache_data[index1][63:0]};
-                            else        mem_wdata = {cache_data[index2][127:96], proc_wdata, cache_data[index2][63:0]};
-                        end
-                        1: begin
-                            if(hit1)    mem_wdata = {cache_data[index1][127:64], proc_wdata, cache_data[index1][31:0]};
-                            else        mem_wdata = {cache_data[index2][127:64], proc_wdata, cache_data[index2][31:0]};
-                        end
-                        0: begin
-                            if(hit1)    mem_wdata = {cache_data[index1][127:32], proc_wdata};
-                            else        mem_wdata = {cache_data[index2][127:32], proc_wdata};
-                        end
-                    endcase
+                    endcase  
                 end
 
                 // write miss -> stall and set the read mode of memory
                 if(WriteMiss) begin
                     proc_stall = 1; 
                     // memory interface
-                    mem_read = 1;
-                    mem_addr = proc_addr[29:2];
+                    if(WriteBack) begin
+                        mem_addr = {cache_tag[index2], index2[2:1]};
+                        mem_wdata = cache_data[index2];
+                        mem_write = 1;
+                    end
+                    else begin
+                        mem_addr = proc_addr[29:2];
+                        mem_read = 1;
+                    end
                 end
             end
             
@@ -240,14 +290,22 @@ module Dcache(
                     next_cache_valid[index2] = next_cache_valid[index1];
                     next_cache_tag[index2] = next_cache_tag[index1];
                     next_cache_data[index2] = next_cache_data[index1];
+                    next_cache_dirty[index2] = next_cache_dirty[index1];
                     // Then write the new data to the index1
                     // As a result index1 acts as the most recently used block
                     next_cache_valid[index1] = 1;
                     next_cache_tag[index1] = tag;
+                    next_cache_dirty[index1] = 0;
                     
                     if(ReadMiss) begin
-                        proc_stall = 0;
-                        proc_rdata = target_mem_data;
+                        // if(preload_valid) begin
+                        //     proc_stall = 1;
+                        //     next_preload_count = 1;
+                        // end
+                        // else begin
+                            proc_stall = 0;
+                            proc_rdata = target_mem_data;
+                        // end
                         next_cache_data[index1] = mem_rdata;
                     end
                     if(WriteMiss) begin
@@ -265,20 +323,41 @@ module Dcache(
                 // default: stall and set the write mode of memory
                 proc_stall = 1;
                 mem_write = 1;
-                mem_wdata = WriteHit ? (hit1 ? cache_data[index1] : cache_data[index2]) : cache_data[index1];
-                mem_addr = proc_addr[29:2];
+                mem_wdata = cache_data[index2];
+                mem_addr = {cache_tag[index2], index2[2:1]};
                 
                 // when mem ready (come from writehit), cancel the write mode
                 // when mem ready (come from writemiss), cancel the write mode and update the cache data
                 if(mem_ready) begin
-                    mem_addr = 0;
                     mem_write = 0;
                     mem_wdata = 0;
-                    proc_stall = 0;
+                    mem_addr = proc_addr[29:2];
+                    mem_read = 1;
+                    proc_stall = 1;
                 end
             end
-            default: begin
-            end
+            
+            // PRELOAD: begin
+            //     next_preload_count = preload_count + 1;
+            //     mem_read = 1;
+            //     mem_addr = preload_addr;
+            //     proc_stall = 1;
+                
+            //     if(preload_count > 1) begin
+            //         proc_stall = 0;
+            //         proc_rdata = hit1 ? target_cache_data1 : target_cache_data2;
+            //     end
+                
+            //     if(preload_count > 4) begin
+            //         mem_read = 0;
+            //         mem_addr = 0;
+            //         next_cache_data[preload_index] = mem_rdata;
+            //         next_cache_tag[preload_index] = preload_tag;
+            //         next_cache_valid[preload_index] = 1;
+            //         next_preload_count = 0;
+            //     end
+                
+            // end
         endcase
     end
 
@@ -288,20 +367,24 @@ module Dcache(
         case(state)
             REQUEST: begin
                 // read hit -> remain REQUEST
+                if(ReadHit) begin
+                    // next_state = preload_valid ? PRELOAD : REQUEST;
+                    next_state = REQUEST;
+                end
                 
                 // read_miss -> go to READMEM
                 if(ReadMiss) begin
-                    next_state = READMEM;
+                    next_state = WriteBack ? WRITEMEM : READMEM;
                 end
 
                 // write hit -> go to WRITEMEM
                 if(WriteHit) begin
-                    next_state = WRITEMEM;
+                    next_state = REQUEST;
                 end
 
                 // write miss -> goto READMEM then WRITEMEM
                 if(WriteMiss) begin
-                    next_state = READMEM;
+                    next_state = WriteBack ? WRITEMEM : READMEM;
                 end
             end
             
@@ -309,21 +392,19 @@ module Dcache(
                 // when mem ready (come from readmiss), go back to REQUEST
                 // when mem ready (come from writemiss), go to WRITEMEM
                 if(mem_ready) begin
-                    if(ReadMiss) begin
-                        next_state = REQUEST;
-                    end
-                    else if(WriteMiss) begin
-                        next_state = WRITEMEM;
-                    end
+                    // next_state = (preload_valid && ReadMiss) ? PRELOAD : REQUEST;
+                    next_state = REQUEST;
                 end
             end
            
             WRITEMEM: begin 
                 // go back to REQUEST
                 if(mem_ready) begin
-                    next_state = REQUEST;
+                    next_state = READMEM;
                 end
             end
+
+
             default: begin
                 next_state = state;
             end
@@ -338,16 +419,22 @@ module Dcache(
                 cache_data[i] <= 0;
                 cache_tag[i] <= 0;
                 cache_valid[i] <= 0;
+                cache_dirty[i] <= 0;
             end
             state <= 0; // request
+            // preload_count <= 0;
+            // run_count <= 0;
         end
         else begin
             for (i = 0; i < 8; i = i+1) begin
                 cache_data[i] <= next_cache_data[i];
                 cache_tag[i] <= next_cache_tag[i];
                 cache_valid[i] <= next_cache_valid[i];
+                cache_dirty[i] <= next_cache_dirty[i];
             end
             state <= next_state;
+            // preload_count <= next_preload_count;
+            // run_count <= next_run_count;
         end
     end
 

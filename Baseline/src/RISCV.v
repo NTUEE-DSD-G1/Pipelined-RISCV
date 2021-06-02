@@ -108,6 +108,7 @@ module RISCV_Pipeline(
     wire            ID_Equal;
     wire    [31:0]  ID_addr;
     wire    [31:0]  MEM_dout_mux;
+    wire            ID_Jump;
 
     // Forwarding unit
     reg     [1:0]   ForwardA, ForwardB;
@@ -162,18 +163,20 @@ module RISCV_Pipeline(
     // ICACHE
     assign ICACHE_ren = 1;
     assign ICACHE_wen = 0;
-    assign ICACHE_addr = (IF_PCWrite & (ID_Branch_Jump | ID_Jal | ID_Jalr)) ? ID_addr[31:2] : IF_PC[31:2];
+    // assign ICACHE_addr = (IF_PCWrite & ID_Jump) ? ID_addr[31:2] : IF_PC[31:2];
+    assign ICACHE_addr = IF_PC[31:2];
     assign ICACHE_wdata = 0;
     
     // PC
     assign IF_PC_4 = IF_PC + 4;
+    assign ID_Jump = ID_Branch_Jump | ID_Jal | ID_Jalr;
     always@(*) begin
         // if ICACHE is not ready, keep PC the same
         if(IF_PCWrite) begin
-            // ID_Branch_Jump = BNE or BEQ
-            if(ID_Branch_Jump | ID_Jal | ID_Jalr) begin // jump to another address
+            if(ID_Jump) begin // jump to another address
                 next_IF_PC = ID_addr;
             end
+            // ID_Branch_Jump = BNE or BEQ
             else if(ICACHE_stall) begin
                 next_IF_PC = IF_PC;
             end
@@ -188,7 +191,7 @@ module RISCV_Pipeline(
     
     // instruction
     always@(*) begin
-        if(ID_Branch_Jump | ICACHE_stall | ID_Jal | ID_Jalr) begin
+        if(ID_Jump | ICACHE_stall) begin
             // NOP: addi $r0 $r0 0 
             next_IR = 32'b00000000000000000000000000010011;
         end
@@ -308,20 +311,20 @@ module RISCV_Pipeline(
         if(EX_RD == ID_RS1 & EX_RD != 0 & ~EX_MemtoReg & EX_RegWrite) begin
             ID_busRS1_mux = (EX_Jal | EX_Jalr) ? EX_PC_4 : EX_dout;
         end
-        else if(MEM_RD == ID_RS1 & MEM_RD != 0 & ~MEM_MemtoReg & MEM_RegWrite) begin
+        else if(MEM_RD == ID_RS1 & MEM_RD != 0 & MEM_RegWrite) begin
             ID_busRS1_mux = MEM_dout_mux;
         end
         
         if(EX_RD == ID_RS2 & EX_RD != 0 & ~EX_MemtoReg & EX_RegWrite) begin
             ID_busRS2_mux = (EX_Jal | EX_Jalr) ? EX_PC_4 : EX_dout;
         end
-        else if(MEM_RD == ID_RS2 & MEM_RD != 0 & ~MEM_MemtoReg & MEM_RegWrite) begin
+        else if(MEM_RD == ID_RS2 & MEM_RD != 0 & MEM_RegWrite) begin
             ID_busRS2_mux = MEM_dout_mux;
         end
     end
     
     assign ID_Equal = (ID_busRS1_mux == ID_busRS2_mux);
-    assign ID_addr = $signed(ID_immgen) + $signed((ID_Jalr ? ID_busRS1_mux : ID_PC));
+    assign ID_addr = $signed(ID_immgen) + $signed((ID_Jalr ? ID_busRS1 : ID_PC));
     
     // ID: immgen
     always@(*) begin
@@ -443,18 +446,18 @@ module RISCV_Pipeline(
     // PC and instruction
     always@(posedge clk) begin
         if(!rst_n) begin
-            IF_PC <= 0;
-            ID_PC <= 0;
-            IR    <= 0;
+            IF_PC       <= 0;
+            ID_PC       <= 0;
+            IR          <= 0;
             ID_PC_4     <= 0;
             EX_PC_4     <= 0;
             MEM_PC_4    <= 0;
         end
         else begin
-            IF_PC <= DCACHE_stall ? IF_PC : next_IF_PC;
-            ID_PC <= DCACHE_stall ? ID_PC : IF_PC;
-            IR    <= DCACHE_stall ? IR : next_IR;
-            ID_PC_4     <= DCACHE_stall ? ID_PC_4 : IF_PC_4;
+            IF_PC       <= (DCACHE_stall | (ICACHE_stall & ID_Jump)) ? IF_PC : next_IF_PC;
+            ID_PC       <= (DCACHE_stall | (ICACHE_stall & ID_Jump)) ? ID_PC : IF_PC;
+            IR          <= (DCACHE_stall | (ICACHE_stall & ID_Jump)) ? IR : next_IR;
+            ID_PC_4     <= (DCACHE_stall | (ICACHE_stall & ID_Jump)) ? ID_PC_4 : IF_PC_4;
             EX_PC_4     <= DCACHE_stall ? EX_PC_4 : ID_PC_4;
             MEM_PC_4    <= DCACHE_stall ? MEM_PC_4 : EX_PC_4;
         end
