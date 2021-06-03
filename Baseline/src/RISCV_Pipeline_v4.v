@@ -186,9 +186,10 @@ always @(*) begin
     if (ICACHE_stall || DCACHE_stall || load_use_hazard) begin
         next_PC = PC;
     end
-    else begin
+    else if(branch_jump || jalr || jal)begin
         next_PC = jump_addr[31:2];
     end
+    else next_PC = PC + 1;
 end
 
 // IF/ID FFs
@@ -366,20 +367,15 @@ assign branch_jump = (beq && (reg_file_r1 == reg_file_r2)) ||
 assign jump_addr_adder_out = jump_addr_adder_in1 + jump_addr_adder_in2;
 always @(*) begin
     jump_addr = jump_addr_adder_out;
-    if (branch_jump || jal) begin
-        // jump_addr = $signed(ID_PC << 2) + $signed(imm);
-        jump_addr_adder_in1 = $signed(ID_PC << 2);
-        jump_addr_adder_in2 = $signed(imm);
-    end
-    else if (jalr) begin
+    if (jalr) begin
         // jump_addr = $signed(reg_file_r1) + $signed(imm);
         jump_addr_adder_in1 = $signed(reg_file_r1_jalr);
         jump_addr_adder_in2 = $signed(imm);
     end
     else begin
-        // jump_addr = (PC << 2)  + 4;
-        jump_addr_adder_in1 = PC << 2;
-        jump_addr_adder_in2 = 4;
+        // jump_addr = $signed(ID_PC << 2) + $signed(imm);
+        jump_addr_adder_in1 = $signed(ID_PC << 2);
+        jump_addr_adder_in2 = $signed(imm);
     end
 end
 
