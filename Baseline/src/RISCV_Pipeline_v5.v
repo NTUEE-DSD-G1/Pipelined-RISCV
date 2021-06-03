@@ -120,7 +120,7 @@ reg         EX_reg_write,   next_EX_reg_write;   // register write
 reg         EX_mem_read,    next_EX_mem_read;    // memory read
 reg         EX_mem_write,   next_EX_mem_write;   // memory write
 reg signed  [31:0] EX_bus1, next_EX_bus1;        // register read bus1
-reg signed  [31:0] EX_bus2, next_EX_bus2;        // register read bus2 
+reg signed  [31:0] EX_bus2, next_EX_bus2;        // register read bus2
 reg   [1:0] EX_data_hazard_A, next_EX_data_hazard_A;
 reg   [1:0] EX_data_hazard_B, next_EX_data_hazard_B;
 
@@ -289,20 +289,26 @@ always @(*) begin
     jalr_hazard = 1'b0;
     if (!load_use_hazard) begin
         if (jalr) begin
-            if (ID_data_hazard_A == EX_FORWARD) begin
+            // ID_data_hazard_A == EX_FORWARD
+            if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin
                 jalr_hazard = 1'b1;
             end
             // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
-            else if (ID_data_hazard_A == MEM_FORWARD && MEM_mem_read) begin
+            // ID_data_hazard_A == MEM_FORWARD && MEM_mem_read
+            else if ((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) && MEM_mem_read) begin
                 jalr_hazard = 1'b1;
             end
         end
         else if (beq || bne) begin
-            if (ID_data_hazard_A == EX_FORWARD || ID_data_hazard_B == EX_FORWARD) begin
+            // ID_data_hazard_A == EX_FORWARD || ID_data_hazard_B == EX_FORWARD
+            if ((EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) ||
+                (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write)) begin
                 jalr_hazard = 1'b1;
             end
             // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
-            else if ((ID_data_hazard_A == MEM_FORWARD || ID_data_hazard_B == MEM_FORWARD) && MEM_mem_read) begin
+            // (ID_data_hazard_A == MEM_FORWARD || ID_data_hazard_B == MEM_FORWARD) && MEM_mem_read
+            else if (((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) ||
+                      (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write)) && MEM_mem_read) begin
                 jalr_hazard = 1'b1;
             end
         end

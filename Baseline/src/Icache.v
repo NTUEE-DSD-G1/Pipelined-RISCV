@@ -35,8 +35,9 @@ module Icache(
 parameter NUM_OF_SET = 4;
 parameter NUM_OF_WAY = 2;
 
-parameter IDLE = 1'b0;
-parameter READ_MEM = 1'b1;
+parameter IDLE = 2'd0;
+parameter READ_MEM = 2'd1;
+parameter READ_FIN = 2'd2;
 
 //==== wire/reg definition ================================
 // outputs 
@@ -47,7 +48,7 @@ reg [ 27:0] mem_addr;
 reg [127:0] mem_wdata;
 
 // FFs
-reg         state, next_state;
+reg  [1:0] state, next_state;
 
 reg [127:0] data[0:NUM_OF_SET-1][0:NUM_OF_WAY-1],  next_data[0:NUM_OF_SET-1][0:NUM_OF_WAY-1];
 reg [ 25:0] tag[0:NUM_OF_SET-1][0:NUM_OF_WAY-1],   next_tag[0:NUM_OF_SET-1][0:NUM_OF_WAY-1];
@@ -106,14 +107,9 @@ always @(*) begin
         end
         READ_MEM: begin
             if (mem_ready) begin
-                next_state = IDLE;
+                next_state = READ_FIN;
                 mem_read = 1'b0;
-                proc_stall = 1'b0;
-                next_old[set_idx] = ~old[set_idx];
-                next_valid[set_idx][old[set_idx]] = 1'b1;
-                next_tag[set_idx][old[set_idx]] = in_tag;
-                next_data[set_idx][old[set_idx]] = mem_rdata;
-                proc_rdata = mem_rdata[(word_idx+1)*32-1 -: 32];
+                proc_stall = 1'b1;
             end
             else begin
                 next_state = READ_MEM;
@@ -121,6 +117,15 @@ always @(*) begin
                 mem_addr = { in_tag, set_idx };
                 proc_stall = 1'b1;
             end
+        end
+        READ_FIN: begin
+            next_state = IDLE;
+            proc_stall = 1'b0;
+            next_old[set_idx] = ~old[set_idx];
+            next_valid[set_idx][old[set_idx]] = 1'b1;
+            next_tag[set_idx][old[set_idx]] = in_tag;
+            next_data[set_idx][old[set_idx]] = mem_rdata;
+            proc_rdata = mem_rdata[(word_idx+1)*32-1 -: 32];
         end
     endcase
 end
@@ -131,22 +136,22 @@ always@( posedge clk ) begin
     if( proc_reset ) begin
         state <= IDLE;
         for (j = 0; j < NUM_OF_SET; j=j+1) begin
-            old[j] = 0;
+            old[j] <= 0;
             for (k = 0; k < NUM_OF_WAY; k=k+1) begin
-                data[j][k] = 128'b0;
-                tag[j][k] = 0;
-                valid[j][k] = 0;
+                data[j][k] <= 128'b0;
+                tag[j][k] <= 0;
+                valid[j][k] <= 0;
             end
         end
     end
     else begin
         state <= next_state;
         for (j = 0; j < NUM_OF_SET; j=j+1) begin
-            old[j] = next_old[j];
+            old[j] <= next_old[j];
             for (k = 0; k < NUM_OF_WAY; k=k+1) begin
-                data[j][k] = next_data[j][k];
-                tag[j][k] = next_tag[j][k];
-                valid[j][k] = next_valid[j][k];
+                data[j][k] <= next_data[j][k];
+                tag[j][k] <= next_tag[j][k];
+                valid[j][k] <= next_valid[j][k];
             end
         end
     end
