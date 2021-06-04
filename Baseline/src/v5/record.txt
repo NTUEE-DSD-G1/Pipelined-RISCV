@@ -1,0 +1,64 @@
+sdc cycle   :   2.6
+tb cycle    :   2.61
+total time  :   5312.04
+area        :   304129.945414
+timing      :   as below
+
+Operating Conditions: slow   Library: slow
+Wire Load Model Mode: top
+
+  Startpoint: i_RISCV/MEM_alu_out_reg[5]
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: mem_wdata_D[15]
+            (output port clocked by CLK)
+  Path Group: CLK
+  Path Type: max
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  CHIP               tsmc13_wl10           slow
+
+  Point                                                   Incr       Path
+  --------------------------------------------------------------------------
+  clock CLK (rise edge)                                   0.00       0.00
+  clock network delay (ideal)                             0.50       0.50
+  i_RISCV/MEM_alu_out_reg[5]/CK (DFFRX4)                  0.00 #     0.50 r
+  i_RISCV/MEM_alu_out_reg[5]/QN (DFFRX4)                  0.22       0.72 r
+  i_RISCV/U3019/Y (INVX12)                                0.06       0.78 f
+  i_RISCV/DCACHE_addr[3] (RISCV_Pipeline)                 0.00       0.78 f
+  D_cache/proc_addr[3] (Dcache)                           0.00       0.78 f
+  D_cache/U1166/Y (CLKAND2X12)                            0.13       0.91 f
+  D_cache/U1207/Y (CLKINVX16)                             0.07       0.98 r
+  D_cache/U1186/Y (INVX20)                                0.09       1.06 f
+  D_cache/U1416/Y (AO22X4)                                0.18       1.24 f
+  D_cache/U1430/Y (OR2X8)                                 0.10       1.35 f
+  D_cache/U4527/Y (XOR2X4)                                0.10       1.45 r
+  D_cache/U1587/Y (NOR2X6)                                0.05       1.50 f
+  D_cache/U224/Y (AND4X8)                                 0.14       1.63 f
+  D_cache/U1835/Y (NAND4X8)                               0.10       1.74 r
+  D_cache/U37/Y (NAND2X6)                                 0.06       1.80 f
+  D_cache/U1238/Y (CLKINVX8)                              0.05       1.85 r
+  D_cache/U1312/Y (NAND2X6)                               0.03       1.89 f
+  D_cache/U4550/Y (OAI32X2)                               0.17       2.06 r
+  D_cache/U1533/Y (BUFX12)                                0.13       2.18 r
+  D_cache/U146/Y (INVX16)                                 0.04       2.22 f
+  D_cache/U1119/Y (CLKINVX20)                             0.04       2.26 r
+  D_cache/U1171/Y (BUFX20)                                0.09       2.35 r
+  D_cache/U4498/Y (AND2XL)                                0.24       2.59 r
+  D_cache/mem_wdata[15] (Dcache)                          0.00       2.59 r
+  U232/Y (INVX3)                                          0.07       2.66 f
+  U231/Y (BUFX12)                                         0.10       2.76 f
+  U359/Y (CLKINVX20)                                      0.14       2.90 r
+  mem_wdata_D[15] (out)                                   0.00       2.90 r
+  data arrival time                                                  2.90
+
+  clock CLK (rise edge)                                   2.60       2.60
+  clock network delay (ideal)                             0.50       3.10
+  clock uncertainty                                      -0.10       3.00
+  output external delay                                  -0.10       2.90
+  data required time                                                 2.90
+  --------------------------------------------------------------------------
+  data required time                                                 2.90
+  data arrival time                                                 -2.90
+  --------------------------------------------------------------------------
+  slack (MET)                                                        0.00
