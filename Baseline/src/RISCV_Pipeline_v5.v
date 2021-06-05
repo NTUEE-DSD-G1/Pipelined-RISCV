@@ -603,8 +603,8 @@ assign DCACHE_wen   = MEM_mem_write;
 assign DCACHE_addr  = MEM_alu_out[31:2];
 assign DCACHE_wdata = { reg_file[MEM_reg_rd][7:0]  , reg_file[MEM_reg_rd][15:8],
                         reg_file[MEM_reg_rd][23:16], reg_file[MEM_reg_rd][31:24] }; // FIXME
-wire  [31:0] answer;
-assign answer = reg_file[MEM_reg_rd];
+// wire  [31:0] answer;
+// assign answer = reg_file[MEM_reg_rd];
 
 // MEM/WB FFs
 always @(*) begin

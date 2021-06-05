@@ -1,7 +1,71 @@
+
+=================================== Best ==========================================
+
+sdc cycle   :   2.55
+tb cycle    :   2.51
+total time  :   5119.37
+area        :   310398.4
+AT (10^9)   :   1.589
+timing      :   as below
+
+Operating Conditions: slow   Library: slow
+Wire Load Model Mode: top
+
+  Startpoint: i_RISCV/MEM_reg_rd_reg[3]
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: D_cache/data_reg[2][1][118]
+            (rising edge-triggered flip-flop clocked by CLK)
+  Path Group: CLK
+  Path Type: max
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  CHIP               tsmc13_wl10           slow
+
+  Point                                                   Incr       Path
+  --------------------------------------------------------------------------
+  clock CLK (rise edge)                                   0.00       0.00
+  clock network delay (ideal)                             0.50       0.50
+  i_RISCV/MEM_reg_rd_reg[3]/CK (DFFRX4)                   0.00 #     0.50 r
+  i_RISCV/MEM_reg_rd_reg[3]/Q (DFFRX4)                    0.30       0.80 r
+  i_RISCV/U1035/Y (INVX6)                                 0.08       0.88 f
+  i_RISCV/U2981/Y (NOR2X8)                                0.11       0.99 r
+  i_RISCV/U3186/Y (NAND2X4)                               0.07       1.06 f
+  i_RISCV/U2053/Y (BUFX4)                                 0.15       1.21 f
+  i_RISCV/U2052/Y (BUFX8)                                 0.17       1.38 f
+  i_RISCV/U1684/Y (OAI22XL)                               0.29       1.66 r
+  i_RISCV/U6107/Y (NOR4X1)                                0.14       1.80 f
+  i_RISCV/U4095/Y (AO22X4)                                0.19       1.99 f
+  i_RISCV/DCACHE_wdata[22] (RISCV_Pipeline)               0.00       1.99 f
+  D_cache/proc_wdata[22] (Dcache)                         0.00       1.99 f
+  D_cache/U2696/Y (CLKINVX1)                              0.17       2.16 r
+  D_cache/U976/Y (CLKBUFX6)                               0.23       2.39 r
+  D_cache/U514/Y (OR2XL)                                  0.24       2.62 r
+  D_cache/U515/Y (NAND3X2)                                0.08       2.70 f
+  D_cache/data_reg[2][1][118]/D (EDFFTRXL)                0.00       2.70 f
+  data arrival time                                                  2.70
+
+  clock CLK (rise edge)                                   2.55       2.55
+  clock network delay (ideal)                             0.50       3.05
+  clock uncertainty                                      -0.10       2.95
+  D_cache/data_reg[2][1][118]/CK (EDFFTRXL)               0.00       2.95 r
+  library setup time                                     -0.25       2.70
+  data required time                                                 2.70
+  --------------------------------------------------------------------------
+  data required time                                                 2.70
+  data arrival time                                                 -2.70
+  --------------------------------------------------------------------------
+  slack (MET)                                                        0.00
+
+
+
+=================================== Better ==========================================
+
 sdc cycle   :   2.6
 tb cycle    :   2.61
 total time  :   5312.04
 area        :   304129.945414
+AT (10^9)   :   1.616
 timing      :   as below
 
 Operating Conditions: slow   Library: slow
