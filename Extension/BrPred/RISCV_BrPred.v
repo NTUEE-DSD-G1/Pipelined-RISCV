@@ -107,7 +107,6 @@ integer i;
 // --------------------------------------------
 
 // feedback FFs
-wire [31:0] real_PC; // FIXME
 reg  [29:0] PC, next_PC; // use 30 bits for PC
 reg  [31:0] reg_file [0:REG_AMOUNT-1];
 reg  [31:0] next_reg_file [0:REG_AMOUNT-1];
@@ -117,8 +116,6 @@ reg  [31:0] next_reg_file [0:REG_AMOUNT-1];
 // IF/ID
 reg  [31:0] ID_instr,       next_ID_instr;       // instruction
 reg  [29:0] ID_PC,          next_ID_PC;          // use 30 bits for PC
-wire [31:0] real_ID_PC; // FIXME
-assign real_ID_PC = ID_PC << 2;
 
 // ID/EX
 reg   [4:0] EX_reg_rd,      next_EX_reg_rd;      // register rd
@@ -161,7 +158,7 @@ wire        jal;
 wire        jalr;
 wire        beq;
 wire        bne;
-reg         branch_jump; // 1 for beq or bne need to jump
+reg         branch_jump; // 1 for beq or bne "need to jump"
 
 reg   [3:0] alu_control;
 wire        reg_write;
@@ -173,8 +170,6 @@ reg  [31:0] reg_file_r1; // read data from reg_file
 reg  [31:0] reg_file_r2; // read data from reg_file
 reg  [31:0] jump_addr;   // instruction address for branch, jal, jalr jumping
 reg  [31:0] jump_addr_add1;
-// reg  [31:0] jump_addr_adder_in1, jump_addr_adder_in2;
-// wire [31:0] jump_addr_adder_out;
 
 reg         load_use_hazard;
 reg         jalr_hazard;
@@ -192,7 +187,6 @@ reg  [31:0] alu_sub_result;
 // --------------------------------------------
 
 // -----------------IF stage-------------------
-assign real_PC = PC << 2; // FIXME
 // read I-CACHE
 assign ICACHE_ren   = 1'b1;
 assign ICACHE_wen   = 1'b0;
@@ -200,6 +194,7 @@ assign ICACHE_addr  = PC;
 assign ICACHE_wdata = 32'd0;
 
 assign PC_jump = branch_jump | jal | jalr;
+
 always @(*) begin
     next_PC = PC;
     if (ICACHE_stall || DCACHE_stall || load_use_hazard || jalr_hazard) begin
@@ -223,7 +218,7 @@ always @(*) begin
     else begin
         next_ID_PC = PC;
         next_ID_instr = { ICACHE_rdata[7:0],   ICACHE_rdata[15:8], 
-                          ICACHE_rdata[23:16], ICACHE_rdata[31:24] };
+                          ICACHE_rdata[23:16], ICACHE_rdata[31:24] }; // little endian conversion
     end
 end
 
@@ -296,46 +291,47 @@ always @(*) begin
     end
 end
 
-// detect jalr hazard
+// detect jalr hazard (jalr, beq, bne)
+// Consider the case jalr need reg[rs1] but the rs1 is still in EX or MEM stage
+// When this situation happens, we will stall one cycle.
+// Stall the cycle can shorten the critical path sharply.
+
 always @(*) begin
     jalr_hazard = 1'b0;
-    // if (!load_use_hazard) begin
-        if (jalr) begin
-            // ID_data_hazard_A == EX_FORWARD
-            if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin
-                jalr_hazard = 1'b1;
-            end
-            // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
-            // ID_data_hazard_A == MEM_FORWARD && MEM_mem_read
-            else if ((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) && MEM_mem_read) begin
-                jalr_hazard = 1'b1;
-            end
+    if (jalr) begin
+        // ID_data_hazard_A == EX_FORWARD
+        if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin
+            jalr_hazard = 1'b1;
         end
-        else if (beq || bne) begin
-            // ID_data_hazard_A == EX_FORWARD || ID_data_hazard_B == EX_FORWARD
-            if ((EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) ||
-                (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write)) begin
-                jalr_hazard = 1'b1;
-            end
-            // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
-            // (ID_data_hazard_A == MEM_FORWARD || ID_data_hazard_B == MEM_FORWARD) && MEM_mem_read
-            else if (((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) ||
-                      (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write)) && MEM_mem_read) begin
-                jalr_hazard = 1'b1;
-            end
+        // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
+        // ID_data_hazard_A == MEM_FORWARD && MEM_mem_read
+        else if ((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) && MEM_mem_read) begin
+            jalr_hazard = 1'b1;
         end
+    end
+    else if (beq || bne) begin
+        // ID_data_hazard_A == EX_FORWARD || ID_data_hazard_B == EX_FORWARD
+        if ((EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) ||
+            (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write)) begin
+            jalr_hazard = 1'b1;
+        end
+        // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
+        // (ID_data_hazard_A == MEM_FORWARD || ID_data_hazard_B == MEM_FORWARD) && MEM_mem_read
+        else if (((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) ||
+                    (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write)) && MEM_mem_read) begin
+            jalr_hazard = 1'b1;
+        end
+    end
     //end
 end
 
 // immediate generate
 always @(*) begin
     if (beq | bne) begin // branch equal or branch not equal
-        imm = { {20{ID_instr[31]}}, ID_instr[7],
-               ID_instr[30:25], ID_instr[11:8], 1'b0 };
+        imm = { {20{ID_instr[31]}}, ID_instr[7], ID_instr[30:25], ID_instr[11:8], 1'b0 };
     end
     else if (jal)  begin // jal
-        imm = { {12{ID_instr[31]}}, ID_instr[19:12], 
-                ID_instr[20], ID_instr[30:25], ID_instr[24:21], 1'b0};
+        imm = { {12{ID_instr[31]}}, ID_instr[19:12], ID_instr[20], ID_instr[30:25], ID_instr[24:21], 1'b0};
     end
     else if (mem_write)  begin // sw
         imm = {{21{ID_instr[31]}}, ID_instr[30:25], ID_instr[11:7]};
@@ -359,12 +355,13 @@ always @(*) begin
     end
 end
 
-// detect ID data hazard
+// detect ID data hazard and transmit the signal to EX stage
+// Doing so can save the FF used to transmit RS1 RS2...
 always@ (*) begin
-    if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
-        ID_data_hazard_A = EX_FORWARD;
-    end
-    else if (MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) begin
+    // if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin
+    //     ID_data_hazard_A = EX_FORWARD;
+    // end
+    if (MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) begin
         ID_data_hazard_A = MEM_FORWARD;
     end
     else if (WB_reg_rd != 0 && WB_reg_rd == rs1 && WB_reg_write) begin
@@ -374,10 +371,10 @@ always@ (*) begin
         ID_data_hazard_A = NO_HAZARD;
     end
 
-    if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
-        ID_data_hazard_B = EX_FORWARD;
-    end
-    else if (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write) begin
+    // if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin
+    //     ID_data_hazard_B = EX_FORWARD;
+    // end
+    if (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write) begin
         ID_data_hazard_B = MEM_FORWARD;
     end
     else if (WB_reg_rd != 0 && WB_reg_rd == rs2 && WB_reg_write) begin
@@ -388,23 +385,26 @@ always@ (*) begin
     end
 end
 
+// ===============================================================================
 // forwarding
-always @(*) begin // FIXME:  only consider WB_FORWARD
-    case(ID_data_hazard_A)
-        NO_HAZARD:   reg_file_r1 = reg_file[rs1];
-        EX_FORWARD:  reg_file_r1 = alu_out;
-        MEM_FORWARD: reg_file_r1 = next_WB_wb_data;
-        WB_FORWARD:  reg_file_r1 = WB_wb_data;
-        default:     reg_file_r1 = reg_file[rs1];
-    endcase
+always @(*) begin
+    reg_file_r1  = (ID_data_hazard_A == WB_FORWARD) ? WB_wb_data : reg_file[rs1];
+    reg_file_r2  = (ID_data_hazard_B == WB_FORWARD) ? WB_wb_data : reg_file[rs2];
+    // case(ID_data_hazard_A)
+    //     NO_HAZARD:   reg_file_r1 = reg_file[rs1];
+    //     EX_FORWARD:  reg_file_r1 = alu_out;
+    //     MEM_FORWARD: reg_file_r1 = next_WB_wb_data;
+    //     WB_FORWARD:  reg_file_r1 = WB_wb_data;
+    //     default:     reg_file_r1 = reg_file[rs1];
+    // endcase
 
-    case(ID_data_hazard_B)
-        NO_HAZARD:   reg_file_r2 = reg_file[rs2];
-        EX_FORWARD:  reg_file_r2 = alu_out;
-        MEM_FORWARD: reg_file_r2 = next_WB_wb_data;
-        WB_FORWARD:  reg_file_r2 = WB_wb_data;
-        default:     reg_file_r2 = reg_file[rs2];
-    endcase
+    // case(ID_data_hazard_B)
+    //     NO_HAZARD:   reg_file_r2 = reg_file[rs2];
+    //     EX_FORWARD:  reg_file_r2 = alu_out;
+    //     MEM_FORWARD: reg_file_r2 = next_WB_wb_data;
+    //     WB_FORWARD:  reg_file_r2 = WB_wb_data;
+    //     default:     reg_file_r2 = reg_file[rs2];
+    // endcase
 end
 
 // branch jump and jal, jalr
@@ -428,6 +428,8 @@ always @(*) begin
         endcase
     end
 end
+// ===============================================================================
+
 // assign branch_jump = !jalr_hazard &&
 //                      ((beq && (reg_file_r1 == reg_file_r2)) ||
 //                      (bne && (reg_file_r1 != reg_file_r2)));
