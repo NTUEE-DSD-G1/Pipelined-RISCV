@@ -107,7 +107,7 @@ integer i;
 // --------------------------------------------
 
 // feedback FFs
-wire [31:0] real_PC;
+wire [31:0] real_PC; // FIXME
 reg  [29:0] PC, next_PC; // use 30 bits for PC
 reg  [31:0] reg_file [0:REG_AMOUNT-1];
 reg  [31:0] next_reg_file [0:REG_AMOUNT-1];
@@ -117,7 +117,7 @@ reg  [31:0] next_reg_file [0:REG_AMOUNT-1];
 // IF/ID
 reg  [31:0] ID_instr,       next_ID_instr;       // instruction
 reg  [29:0] ID_PC,          next_ID_PC;          // use 30 bits for PC
-wire [31:0] real_ID_PC;
+wire [31:0] real_ID_PC; // FIXME
 assign real_ID_PC = ID_PC << 2;
 
 // ID/EX
@@ -192,7 +192,7 @@ reg  [31:0] alu_sub_result;
 // --------------------------------------------
 
 // -----------------IF stage-------------------
-assign real_PC = PC << 2;
+assign real_PC = PC << 2; // FIXME
 // read I-CACHE
 assign ICACHE_ren   = 1'b1;
 assign ICACHE_wen   = 1'b0;
@@ -361,7 +361,7 @@ end
 
 // detect ID data hazard
 always@ (*) begin
-    if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin
+    if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
         ID_data_hazard_A = EX_FORWARD;
     end
     else if (MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) begin
@@ -374,7 +374,7 @@ always@ (*) begin
         ID_data_hazard_A = NO_HAZARD;
     end
 
-    if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin
+    if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
         ID_data_hazard_B = EX_FORWARD;
     end
     else if (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write) begin
@@ -389,7 +389,7 @@ always@ (*) begin
 end
 
 // forwarding
-always @(*) begin
+always @(*) begin // FIXME:  only consider WB_FORWARD
     case(ID_data_hazard_A)
         NO_HAZARD:   reg_file_r1 = reg_file[rs1];
         EX_FORWARD:  reg_file_r1 = alu_out;
@@ -603,8 +603,8 @@ assign DCACHE_wen   = MEM_mem_write;
 assign DCACHE_addr  = MEM_alu_out[31:2];
 assign DCACHE_wdata = { reg_file[MEM_reg_rd][7:0]  , reg_file[MEM_reg_rd][15:8],
                         reg_file[MEM_reg_rd][23:16], reg_file[MEM_reg_rd][31:24] }; // FIXME
-wire  [31:0] answer;
-assign answer = reg_file[MEM_reg_rd];
+// wire  [31:0] answer;
+// assign answer = reg_file[MEM_reg_rd];
 
 // MEM/WB FFs
 always @(*) begin
@@ -629,7 +629,7 @@ end
 // --------------------------------------------
 // feedback FFs
 
-always @(posedge clk or negedge rst_n) begin
+always @(posedge clk) begin
     if (~rst_n) begin
         for (i = 0; i < REG_AMOUNT; i=i+1) begin
             reg_file[i] <= 32'd0;
@@ -646,7 +646,7 @@ always @(posedge clk or negedge rst_n) begin
 end
 
 // pipeline FFs
-always @(posedge clk or negedge rst_n) begin
+always @(posedge clk) begin
     if (~rst_n) begin
         ID_instr       <= 32'd0;
         ID_PC          <= 30'd0;

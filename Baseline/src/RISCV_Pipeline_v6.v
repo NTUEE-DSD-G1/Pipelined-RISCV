@@ -361,10 +361,10 @@ end
 
 // detect ID data hazard
 always@ (*) begin
-    if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
-        ID_data_hazard_A = EX_FORWARD;
-    end
-    else if (MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) begin
+    // if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
+    //     ID_data_hazard_A = EX_FORWARD;
+    // end
+    if (MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) begin
         ID_data_hazard_A = MEM_FORWARD;
     end
     else if (WB_reg_rd != 0 && WB_reg_rd == rs1 && WB_reg_write) begin
@@ -374,10 +374,10 @@ always@ (*) begin
         ID_data_hazard_A = NO_HAZARD;
     end
 
-    if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
-        ID_data_hazard_B = EX_FORWARD;
-    end
-    else if (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write) begin
+    // if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
+    //     ID_data_hazard_B = EX_FORWARD;
+    // end
+    if (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write) begin
         ID_data_hazard_B = MEM_FORWARD;
     end
     else if (WB_reg_rd != 0 && WB_reg_rd == rs2 && WB_reg_write) begin
@@ -391,17 +391,17 @@ end
 // forwarding
 always @(*) begin // FIXME:  only consider WB_FORWARD
     case(ID_data_hazard_A)
-        NO_HAZARD:   reg_file_r1 = reg_file[rs1];
-        EX_FORWARD:  reg_file_r1 = alu_out;
-        MEM_FORWARD: reg_file_r1 = next_WB_wb_data;
+        // NO_HAZARD:   reg_file_r1 = reg_file[rs1];
+        // EX_FORWARD:  reg_file_r1 = alu_out;
+        // MEM_FORWARD: reg_file_r1 = next_WB_wb_data;
         WB_FORWARD:  reg_file_r1 = WB_wb_data;
         default:     reg_file_r1 = reg_file[rs1];
     endcase
 
     case(ID_data_hazard_B)
-        NO_HAZARD:   reg_file_r2 = reg_file[rs2];
-        EX_FORWARD:  reg_file_r2 = alu_out;
-        MEM_FORWARD: reg_file_r2 = next_WB_wb_data;
+        // NO_HAZARD:   reg_file_r2 = reg_file[rs2];
+        // EX_FORWARD:  reg_file_r2 = alu_out;
+        // MEM_FORWARD: reg_file_r2 = next_WB_wb_data;
         WB_FORWARD:  reg_file_r2 = WB_wb_data;
         default:     reg_file_r2 = reg_file[rs2];
     endcase
