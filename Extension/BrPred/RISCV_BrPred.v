@@ -23,7 +23,58 @@
 // area = 304150.3
 // tb = 2.7 (total 5474.25ns)
 
+module BEQ_Prediction_Unit(
+    clk,
+    rst_n,
+    stall,
+    ID_Branch,    
+    PreWrong,
+    Prediction
+);
+    input           clk;
+    input           rst_n;
+    input           stall;          // stall signal from cache or hazard detection unit
+    input           ID_Branch;      // branch signal (ID-stage)
+    input           PreWrong;       // miss prediction signal sent from the comparator
+    output          Prediction;     // Prediction Output (1 for taken and 0 for not)
 
+    // ============ parameter ============
+    parameter       STRONG_TAKEN    = 2'b00;
+    parameter       WEAK_TAKEN      = 2'b01;
+    parameter       STRONG_NOTTAKEN = 2'b10;
+    parameter       WEAK_NOTTAKEN   = 2'b11;
+
+    // ============ reg/write ============
+    reg  [1:0]      state, next_state;
+    wire            taken;  
+    // ============ Combinational ============
+    assign taken = (Prediction && (~PreWrong)) || ((~Prediction) && PreWrong); 
+    assign Prediction = ~state[1];
+    
+    // FSM (state output)
+    always@(*) begin
+        next_state = state;
+        if(stall | ~ID_Branch) begin
+            next_state = state;
+        end
+        else begin
+            next_state = state;
+            case(state)
+                STRONG_TAKEN:       next_state = taken ? STRONG_TAKEN : WEAK_TAKEN;
+                WEAK_TAKEN:         next_state = taken ? STRONG_TAKEN : WEAK_NOTTAKEN;
+                STRONG_NOTTAKEN:    next_state = taken ? WEAK_NOTTAKEN : STRONG_NOTTAKEN;
+                WEAK_NOTTAKEN:      next_state = taken ? WEAK_TAKEN : STRONG_NOTTAKEN;
+            endcase
+        end
+    end
+    // ============ Sequential ============
+    always @(posedge clk) begin
+        if(!rst_n)  state <= 0;
+        else        state <= next_state;
+    end
+
+
+endmodule
 
 module RISCV_Pipeline (
     clk           ,
@@ -158,7 +209,6 @@ wire        jal;
 wire        jalr;
 wire        beq;
 wire        bne;
-reg         branch_jump; // 1 for beq or bne "need to jump"
 
 reg   [3:0] alu_control;
 wire        reg_write;
@@ -182,27 +232,74 @@ reg  signed [31:0] alu_in_2;
 reg  [31:0] alu_out;
 reg  [31:0] alu_sub_result;
 
+// Beq Prediction Unit
+wire        beqPR_PreWrong;
+wire        beqPR_Prediction;  
+wire [31:0] IF_instr;
+wire        IF_Jal, IF_Branch, IF_BranchNot;
+reg  [31:0] IF_imm;
+wire [31:0] IF_BJ_addr;         // beq, bne, jal
+wire [31:0] IF_True_addr;
 // --------------------------------------------
 //                COMBINATIONAL
 // --------------------------------------------
 
+BEQ_Prediction_Unit beqPR(
+    .clk(clk)                                                                   ,
+    .rst_n(rst_n)                                                               ,
+    .stall(ICACHE_stall || DCACHE_stall || load_use_hazard || jalr_hazard)      ,
+    .ID_Branch(beq)                                                             ,
+    .PreWrong(beqPR_PreWrong)                                                   ,
+    .Prediction(beqPR_Prediction)       
+);
+
 // -----------------IF stage-------------------
+
+//=============================================
+// Branch Prediction
+assign IF_instr = { ICACHE_rdata[7:0], ICACHE_rdata[15:8], ICACHE_rdata[23:16], ICACHE_rdata[31:24]};
+assign IF_Branch = (IF_instr[6:0] == OPCODE_BRANCH) & (IF_instr[14:13] == 2'b00); // beq, bne
+assign IF_Jal = (IF_instr[6:0] == OPCODE_JAL);
+assign IF_BJ_addr = $signed(PC << 2) + $signed(IF_imm); 
+always@(*) begin
+    // move jal to IF stage
+    if (IF_Jal)  begin // jal
+        IF_imm = { {12{IF_instr[31]}}, IF_instr[19:12], IF_instr[20], IF_instr[30:25], IF_instr[24:21], 1'b0};
+    end
+    else begin // branch equal or branch not equal
+        IF_imm = { {20{IF_instr[31]}}, IF_instr[7], IF_instr[30:25], IF_instr[11:8], 1'b0 };
+    end
+end
+// ============================================
+
 // read I-CACHE
 assign ICACHE_ren   = 1'b1;
 assign ICACHE_wen   = 1'b0;
 assign ICACHE_addr  = PC;
 assign ICACHE_wdata = 32'd0;
 
-assign PC_jump = branch_jump | jal | jalr;
+// assign PC_jump = branch_jump | jal | jalr;
+assign PC_jump = beqPR_PreWrong | jalr;
+
+wire [31:0] real_PC, real_ID_PC;
+assign real_PC = PC << 2;
+assign real_ID_PC = ID_PC << 2;
 
 always @(*) begin
     next_PC = PC;
     if (ICACHE_stall || DCACHE_stall || load_use_hazard || jalr_hazard) begin
         next_PC = PC;
     end
-    else begin
-        next_PC = jump_addr[31:2];
+    //=============================================
+    // Branch prediction
+    else if(beq && beqPR_PreWrong) begin
+        next_PC = IF_True_addr[31:2];
     end
+    else if(beqPR_Prediction && IF_Branch || IF_Jal) begin
+        next_PC = IF_BJ_addr[31:2];
+    end
+    else next_PC = jump_addr[31:2];
+    //=============================================
 end
 
 // IF/ID FFs
@@ -330,9 +427,9 @@ always @(*) begin
     if (beq | bne) begin // branch equal or branch not equal
         imm = { {20{ID_instr[31]}}, ID_instr[7], ID_instr[30:25], ID_instr[11:8], 1'b0 };
     end
-    else if (jal)  begin // jal
-        imm = { {12{ID_instr[31]}}, ID_instr[19:12], ID_instr[20], ID_instr[30:25], ID_instr[24:21], 1'b0};
-    end
+    // else if (jal)  begin // jal
+    //     imm = { {12{ID_instr[31]}}, ID_instr[19:12], ID_instr[20], ID_instr[30:25], ID_instr[24:21], 1'b0};
+    // end
     else if (mem_write)  begin // sw
         imm = {{21{ID_instr[31]}}, ID_instr[30:25], ID_instr[11:7]};
     end
@@ -358,10 +455,10 @@ end
 // detect ID data hazard and transmit the signal to EX stage
 // Doing so can save the FF used to transmit RS1 RS2...
 always@ (*) begin
-    // if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin
-    //     ID_data_hazard_A = EX_FORWARD;
-    // end
-    if (MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) begin
+    if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin
+        ID_data_hazard_A = EX_FORWARD;
+    end
+    else if (MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) begin
         ID_data_hazard_A = MEM_FORWARD;
     end
     else if (WB_reg_rd != 0 && WB_reg_rd == rs1 && WB_reg_write) begin
@@ -371,10 +468,10 @@ always@ (*) begin
         ID_data_hazard_A = NO_HAZARD;
     end
 
-    // if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin
-    //     ID_data_hazard_B = EX_FORWARD;
-    // end
-    if (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write) begin
+    if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin
+        ID_data_hazard_B = EX_FORWARD;
+    end
+    else if (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write) begin
         ID_data_hazard_B = MEM_FORWARD;
     end
     else if (WB_reg_rd != 0 && WB_reg_rd == rs2 && WB_reg_write) begin
@@ -388,31 +485,31 @@ end
 // ===============================================================================
 // forwarding
 always @(*) begin
-    reg_file_r1  = (ID_data_hazard_A == WB_FORWARD) ? WB_wb_data : reg_file[rs1];
-    reg_file_r2  = (ID_data_hazard_B == WB_FORWARD) ? WB_wb_data : reg_file[rs2];
-    // case(ID_data_hazard_A)
-    //     NO_HAZARD:   reg_file_r1 = reg_file[rs1];
-    //     EX_FORWARD:  reg_file_r1 = alu_out;
-    //     MEM_FORWARD: reg_file_r1 = next_WB_wb_data;
-    //     WB_FORWARD:  reg_file_r1 = WB_wb_data;
-    //     default:     reg_file_r1 = reg_file[rs1];
-    // endcase
+    case(ID_data_hazard_A)
+        NO_HAZARD:   reg_file_r1 = reg_file[rs1];
+        EX_FORWARD:  reg_file_r1 = alu_out;
+        MEM_FORWARD: reg_file_r1 = next_WB_wb_data;
+        WB_FORWARD:  reg_file_r1 = WB_wb_data;
+        default:     reg_file_r1 = reg_file[rs1];
+    endcase
 
-    // case(ID_data_hazard_B)
-    //     NO_HAZARD:   reg_file_r2 = reg_file[rs2];
-    //     EX_FORWARD:  reg_file_r2 = alu_out;
-    //     MEM_FORWARD: reg_file_r2 = next_WB_wb_data;
-    //     WB_FORWARD:  reg_file_r2 = WB_wb_data;
-    //     default:     reg_file_r2 = reg_file[rs2];
-    // endcase
+    case(ID_data_hazard_B)
+        NO_HAZARD:   reg_file_r2 = reg_file[rs2];
+        EX_FORWARD:  reg_file_r2 = alu_out;
+        MEM_FORWARD: reg_file_r2 = next_WB_wb_data;
+        WB_FORWARD:  reg_file_r2 = WB_wb_data;
+        default:     reg_file_r2 = reg_file[rs2];
+    endcase
 end
 
 // branch jump and jal, jalr
 reg  [31:0] cmp_in_1, cmp_in_2;
 wire        cmp_out;
 assign cmp_out = cmp_in_1 == cmp_in_2;
+
+assign beqPR_PreWrong = !jalr_hazard & ((beq & (beqPR_Prediction != cmp_out)) | (bne & (beqPR_Prediction == cmp_out)));
+//                                                    beq jump        equal               bne jump            equal         
 always @(*) begin
-    branch_jump = (!jalr_hazard && ((beq && cmp_out) || (bne && !cmp_out)));
     cmp_in_1 = 0;
     cmp_in_2 = 0;
     if (beq || bne) begin
@@ -430,16 +527,15 @@ always @(*) begin
 end
 // ===============================================================================
 
-// assign branch_jump = !jalr_hazard &&
-//                      ((beq && (reg_file_r1 == reg_file_r2)) ||
-//                      (bne && (reg_file_r1 != reg_file_r2)));
-
 // jump address
 // assign jump_addr_adder_out = jump_addr_adder_in1 + jump_addr_adder_in2;
-reg  [31:0]  branch_jal_addr, jalr_addr, default_addr;
+reg  [31:0]  branch_addr, jalr_addr, default_addr;
+
+assign IF_True_addr =  (beqPR_Prediction) ? ($signed(ID_PC << 2) + 4) : branch_addr;
+
 always @(*) begin
     // jump_addr = jump_addr_adder_out;
-    branch_jal_addr = $signed(ID_PC << 2) + $signed(imm);
+    branch_addr = $signed(ID_PC << 2) + $signed(imm);
     jalr_addr = $signed(jump_addr_add1) + $signed(imm);
 
     case(ID_data_hazard_A)
@@ -453,10 +549,7 @@ always @(*) begin
 
     default_addr = $signed(PC << 2) + 4;
 
-    if (branch_jump || jal) begin
-        jump_addr = branch_jal_addr;
-    end
-    else if (jalr) begin
+    if (jalr) begin
         jump_addr = jalr_addr;
     end
     else begin
@@ -631,7 +724,7 @@ end
 // --------------------------------------------
 // feedback FFs
 
-always @(posedge clk or negedge rst_n) begin
+always @(posedge clk) begin
     if (~rst_n) begin
         for (i = 0; i < REG_AMOUNT; i=i+1) begin
             reg_file[i] <= 32'd0;
@@ -648,7 +741,7 @@ always @(posedge clk or negedge rst_n) begin
 end
 
 // pipeline FFs
-always @(posedge clk or negedge rst_n) begin
+always @(posedge clk) begin
     if (~rst_n) begin
         ID_instr       <= 32'd0;
         ID_PC          <= 30'd0;
