@@ -41,8 +41,6 @@ parameter READ_MEM    = 3'd2;
 parameter WRITE_MEM   = 3'd3;
 parameter DIRTY_WRITE = 3'd4;
 parameter DIRTY_READ  = 3'd5;
-parameter READ_FIN    = 3'd6;
-parameter WRITE_FIN   = 3'd7;
 
 //==== wire/reg definition ================================
 // outputs 
@@ -111,27 +109,17 @@ always @(*) begin
                 end
                 else begin
                     if (dirty[set_idx][old[set_idx]]) begin // dirty, need to write L2 first
+                        next_state = DIRTY_READ;
                         mem_write = 1'b1;
                         mem_addr = proc_addr;
                         mem_wdata = data[set_idx][old[set_idx]][(word_idx+1)*32-1 -: 32];
                         proc_stall = 1'b1;
-                        if (mem_ready) begin // L2 hit
-                            next_state = READ_MEM;
-                        end
-                        else begin // L2 miss
-                            next_state = DIRTY_READ;
-                        end
                     end
                     else begin // not dirty, just read from L2
+                        next_state = READ_MEM;
                         mem_read = 1'b1;
                         mem_addr = proc_addr;
                         proc_stall = 1'b1;
-                        if (mem_ready) begin // L2 hit
-                            next_state = READ_FIN;
-                        end
-                        else begin // L2 miss
-                            next_state = READ_MEM;
-                        end
                     end
                 end
             end
@@ -150,112 +138,86 @@ always @(*) begin
                 end
                 else begin
                     if (dirty[set_idx][old[set_idx]]) begin // dirty, need to write L2 first
+                        next_state = DIRTY_WRITE;
                         mem_write = 1'b1;
                         mem_addr = proc_addr;
                         mem_wdata = data[set_idx][old[set_idx]][(word_idx+1)*32-1 -: 32];
                         proc_stall = 1'b1;
-                        if (mem_ready) begin // L2 hit
-                            next_state = WRITE_MEM;
-                        end
-                        else begin // L2 miss
-                            next_state = DIRTY_WRITE;
-                        end
                     end
                     else begin // not dirty, just read from L2
+                        next_state = WRITE_MEM;
                         mem_read = 1'b1;
                         mem_addr = proc_addr;
                         proc_stall = 1'b1;
-                        if (mem_ready) begin // L2 hit
-                            next_state = WRITE_FIN;                 
-                        end
-                        else begin // L2 miss
-                            next_state = WRITE_MEM;
-                        end
                     end
                 end
             end    
         end
         READ_MEM: begin
-            if (mem_ready) begin
-                next_state = READ_FIN;
-                mem_read = 1'b0;
-                mem_addr = proc_addr;
-                proc_stall = 1'b1;
+            if (mem_ready_FF) begin
+                next_state = IDLE;
+                proc_stall = 1'b0;
+                next_old[set_idx] = ~old[set_idx];
+                next_valid[set_idx][old[set_idx]] = 1'b1;
+                next_tag[set_idx][old[set_idx]] = in_tag;
+                next_data[set_idx][old[set_idx]] = mem_rdata_FF;
+                proc_rdata = mem_rdata_FF[(word_idx+1)*32-1 -: 32];
             end
             else begin
                 next_state = READ_MEM;
-                mem_read = 1'b1;
-                mem_addr = proc_addr;
-                proc_stall = 1'b1;
-            end
-        end
-        WRITE_MEM: begin
-            if (mem_ready) begin
-                next_state = WRITE_FIN;
-                mem_read = 1'b0;
-                mem_addr = proc_addr;
-                proc_stall = 1'b1;
-            end
-            else begin
-                next_state = WRITE_MEM;
                 mem_read = 1'b1;
                 mem_addr = proc_addr;
                 proc_stall = 1'b1;
             end
         end
         DIRTY_READ: begin
-            if (mem_ready) begin
+            if (mem_ready_FF) begin
                 next_state = READ_MEM;
-                mem_addr = proc_addr;
-                mem_read = 1'b1;
                 proc_stall = 1'b1;
+                mem_read = 1'b1;
+                mem_addr = proc_addr;
                 next_dirty[set_idx][old[set_idx]] = 1'b0;
             end
             else begin
                 next_state = DIRTY_READ;
+                proc_stall = 1'b1;
+                mem_write = 1'b1;
                 mem_addr = proc_addr;
                 mem_wdata = data[set_idx][old[set_idx]][(word_idx+1)*32-1 -: 32];
-                mem_write = 1'b1;
+            end
+        end
+        WRITE_MEM: begin
+            if (mem_ready_FF) begin
+                next_state = IDLE;
+                proc_stall = 1'b0;
+                next_old[set_idx] = ~old[set_idx];
+                next_valid[set_idx][old[set_idx]] = 1'b1;
+                next_tag[set_idx][old[set_idx]] = in_tag;
+                next_data[set_idx][old[set_idx]] = mem_rdata_FF;
+                next_data[set_idx][old[set_idx]][(word_idx+1)*32-1 -: 32] = proc_wdata;
+            end
+            else begin
+                next_state = WRITE_MEM;
                 proc_stall = 1'b1;
+                mem_read = 1'b1;
+                mem_addr = proc_addr;
             end
         end
         DIRTY_WRITE: begin
-            if (mem_ready) begin
+            if (mem_ready_FF) begin
                 next_state = WRITE_MEM;
-                mem_addr = proc_addr;
-                mem_read = 1'b1;
                 proc_stall = 1'b1;
+                mem_read = 1'b1;
+                mem_addr = proc_addr;
                 next_dirty[set_idx][old[set_idx]] = 1'b0;
             end
             else begin
                 next_state = DIRTY_WRITE;
+                proc_stall = 1'b1;
+                mem_write = 1'b1;
                 mem_addr = proc_addr;
                 mem_wdata = data[set_idx][old[set_idx]][(word_idx+1)*32-1 -: 32];
-                mem_write = 1'b1;
-                proc_stall = 1'b1;
             end
-        end
-        READ_FIN: begin
-            mem_read = 1'b1;
-            mem_addr = proc_addr;
-            next_state = IDLE;
-            proc_stall = 1'b0;
-            next_old[set_idx] = ~old[set_idx];
-            next_valid[set_idx][old[set_idx]] = 1'b1;
-            next_tag[set_idx][old[set_idx]] = in_tag;
-            next_data[set_idx][old[set_idx]] = mem_rdata;
-            proc_rdata = mem_rdata[(word_idx+1)*32-1 -: 32];
-        end
-        WRITE_FIN: begin
-            mem_read = 1'b1;
-            mem_addr = proc_addr;
-            next_state = IDLE;
-            proc_stall = 1'b0;
-            next_old[set_idx] = ~old[set_idx];
-            next_valid[set_idx][old[set_idx]] = 1'b1;
-            next_tag[set_idx][old[set_idx]] = in_tag;
-            next_data[set_idx][old[set_idx]] = mem_rdata;
-            next_data[set_idx][old[set_idx]][(word_idx+1)*32-1 -: 32] = proc_wdata;
         end
 
     endcase

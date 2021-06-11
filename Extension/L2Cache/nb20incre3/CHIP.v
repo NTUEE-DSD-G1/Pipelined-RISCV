@@ -2,7 +2,7 @@
 `include "Icache.v"
 `include "Dcache.v"
 `include "Icache_L2.v"
-// `include "Dcache_L2.v"
+`include "Dcache_L2.v"
 `include "RISCV_Pipeline.v"
 
 module CHIP (	clk,
@@ -121,12 +121,12 @@ wire [127:0]  DCACHE_L2_rdata;
 		.proc_rdata (DCACHE_rdata)    ,
 		.proc_wdata (DCACHE_wdata)    ,
 		.proc_stall (DCACHE_stall)    ,
-		.mem_read   (mem_read_D)   ,
-		.mem_write  (mem_write_D)   ,
-		.mem_addr   (mem_addr_D)  ,
-		.mem_wdata  (mem_wdata_D) ,
-		.mem_rdata  (mem_rdata_D) ,
-		.mem_ready  (mem_ready_D)
+		.mem_read   (DCACHE_L2_ren)   ,
+		.mem_write  (DCACHE_L2_wen)   ,
+		.mem_addr   (DCACHE_L2_addr)  ,
+		.mem_wdata  (DCACHE_L2_wdata) ,
+		.mem_rdata  (DCACHE_L2_rdata) ,
+		.mem_ready  (DCACHE_L2_ready)
 	);
 
 	Icache I_cache(
@@ -146,22 +146,22 @@ wire [127:0]  DCACHE_L2_rdata;
 		.mem_ready  (ICACHE_L2_ready)
 	);
 
-	// Dcache_L2 D_cache_L2(
-	// 		.clk        (clk)            ,
-	// 		.proc_reset (~rst_n)         ,
-	// 		.proc_read  (DCACHE_L2_ren)  ,
-	// 		.proc_write (DCACHE_L2_wen)  ,
-	// 		.proc_addr  (DCACHE_L2_addr) ,
-	// 		.proc_rdata (DCACHE_L2_rdata),
-	// 		.proc_wdata (DCACHE_L2_wdata),
-	// 		.proc_ready (DCACHE_L2_ready),
-	// 		.mem_read   (mem_read_D)     ,
-	// 		.mem_write  (mem_write_D)    ,
-	// 		.mem_addr   (mem_addr_D)     ,
-	// 		.mem_wdata  (mem_wdata_D)    ,
-	// 		.mem_rdata  (mem_rdata_D)    ,
-	// 		.mem_ready  (mem_ready_D)
-	// );
+	Dcache_L2 D_cache_L2(
+			.clk        (clk)            ,
+			.proc_reset (~rst_n)         ,
+			.proc_read  (DCACHE_L2_ren)  ,
+			.proc_write (DCACHE_L2_wen)  ,
+			.proc_addr  (DCACHE_L2_addr) ,
+			.proc_rdata (DCACHE_L2_rdata),
+			.proc_wdata (DCACHE_L2_wdata),
+			.proc_ready (DCACHE_L2_ready),
+			.mem_read   (mem_read_D)     ,
+			.mem_write  (mem_write_D)    ,
+			.mem_addr   (mem_addr_D)     ,
+			.mem_wdata  (mem_wdata_D)    ,
+			.mem_rdata  (mem_rdata_D)    ,
+			.mem_ready  (mem_ready_D)
+	);
 
 	Icache_L2 I_cache_L2(
 		.clk        (clk)            ,

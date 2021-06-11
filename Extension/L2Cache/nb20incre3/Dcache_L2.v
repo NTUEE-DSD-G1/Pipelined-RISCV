@@ -23,7 +23,7 @@ module Dcache_L2(
     input   [29:0] proc_addr;
     input   [31:0] proc_wdata;
     output         proc_ready;
-    output  [31:0] proc_rdata;
+    output [127:0] proc_rdata;
     // memory interface
     input  [127:0] mem_rdata;
     input          mem_ready;
@@ -63,7 +63,7 @@ reg                    mem_ready_FF, next_mem_ready_FF;
 
 wire read, write;
 wire [27-SET_OFFSET:0] in_tag;
-wire [1:0]             set_idx;
+wire [ SET_OFFSET-1:0] set_idx;
 wire [1:0] word_idx;
 
 //==== combinational circuit ==============================
@@ -159,7 +159,7 @@ always @(*) begin
                 next_valid[set_idx][old[set_idx]] = 1'b1;
                 next_tag[set_idx][old[set_idx]] = in_tag;
                 next_data[set_idx][old[set_idx]] = mem_rdata;
-                proc_rdata = mem_rdata[(word_idx+1)*32-1 -: 32];
+                proc_rdata = mem_rdata;
             end
             else begin
                 next_state = READ_MEM;
