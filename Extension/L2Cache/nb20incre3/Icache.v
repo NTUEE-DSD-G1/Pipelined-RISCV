@@ -36,9 +36,8 @@ parameter NUM_OF_SET = 4;
 parameter NUM_OF_WAY = 2;
 parameter SET_OFFSET = 2;
 
-parameter IDLE = 2'd0;
-parameter READ_MEM = 2'd1;
-parameter READ_FIN = 2'd2;
+parameter IDLE = 1'd0;
+parameter READ_MEM = 1'd1;
 
 //==== wire/reg definition ================================
 // outputs 
@@ -49,13 +48,15 @@ reg [ 29:0] mem_addr;
 reg [ 31:0] mem_wdata;
 
 // FFs
-reg  [1:0] state, next_state;
+reg                   state, next_state;
 
 reg [127:0]           data[0:NUM_OF_SET-1][0:NUM_OF_WAY-1],  next_data[0:NUM_OF_SET-1][0:NUM_OF_WAY-1];
 reg [27-SET_OFFSET:0] tag[0:NUM_OF_SET-1][0:NUM_OF_WAY-1],   next_tag[0:NUM_OF_SET-1][0:NUM_OF_WAY-1];
 reg                   valid[0:NUM_OF_SET-1][0:NUM_OF_WAY-1], next_valid[0:NUM_OF_SET-1][0:NUM_OF_WAY-1];
 reg                   old[0:NUM_OF_SET-1],                   next_old[0:NUM_OF_SET-1];
 
+reg                   mem_ready_FF, next_mem_ready_FF;
+reg [127:0]           mem_rdata_FF, next_mem_rdata_FF;
 
 wire read;
 wire [27-SET_OFFSET:0] in_tag;
@@ -70,13 +71,15 @@ assign set_idx  = proc_addr[1+SET_OFFSET:2];
 assign word_idx = proc_addr[1:0];
 
 always @(*) begin
+    next_mem_ready_FF = mem_ready;
+    next_mem_rdata_FF = mem_rdata;
     next_state = state;
     proc_stall = 1'b0;
     proc_rdata = 0;
     mem_read = 1'b0;
     mem_write = 1'b0;
     mem_addr = 0;
-    mem_wdata = 0;
+    mem_wdata = 127'b0;
     for (i = 0; i < NUM_OF_SET; i=i+1) begin
         next_old[i] = old[i];
         for (l = 0; l < NUM_OF_WAY; l=l+1) begin
@@ -99,24 +102,22 @@ always @(*) begin
                     next_old[set_idx] = 1'b0;
                 end
                 else begin
+                    next_state = READ_MEM;
                     mem_read = 1'b1;
                     mem_addr = proc_addr;
                     proc_stall = 1'b1;
-                    if (mem_ready) begin
-                        next_state = READ_FIN;
-                    end
-                    else begin
-                        next_state = READ_MEM;
-                    end
                 end
             end
         end
         READ_MEM: begin
-            if (mem_ready) begin
-                next_state = READ_FIN;
-                mem_read = 1'b0;
-                mem_addr = proc_addr;
-                proc_stall = 1'b1;
+            if (mem_ready_FF) begin
+                next_state = IDLE;
+                proc_stall = 1'b0;
+                next_old[set_idx] = ~old[set_idx];
+                next_valid[set_idx][old[set_idx]] = 1'b1;
+                next_tag[set_idx][old[set_idx]] = in_tag;
+                next_data[set_idx][old[set_idx]] = mem_rdata_FF;
+                proc_rdata = mem_rdata_FF[(word_idx+1)*32-1 -: 32];
             end
             else begin
                 next_state = READ_MEM;
@@ -125,17 +126,6 @@ always @(*) begin
                 proc_stall = 1'b1;
             end
         end
-        READ_FIN: begin
-            mem_read = 1'b1;
-            mem_addr = proc_addr;
-            next_state = IDLE;
-            proc_stall = 1'b0;
-            next_old[set_idx] = ~old[set_idx];
-            next_valid[set_idx][old[set_idx]] = 1'b1;
-            next_tag[set_idx][old[set_idx]] = in_tag;
-            next_data[set_idx][old[set_idx]] = mem_rdata;
-            proc_rdata = mem_rdata[(word_idx+1)*32-1 -: 32];
-        end
     endcase
 end
 
@@ -143,6 +133,8 @@ end
 integer j, k;
 always@( posedge clk ) begin
     if( proc_reset ) begin
+        mem_ready_FF <= 0;
+        mem_rdata_FF <= 128'b0;
         state <= IDLE;
         for (j = 0; j < NUM_OF_SET; j=j+1) begin
             old[j] <= 0;
@@ -154,6 +146,8 @@ always@( posedge clk ) begin
         end
     end
     else begin
+        mem_ready_FF <= next_mem_ready_FF;
+        mem_rdata_FF <= next_mem_rdata_FF;
         state <= next_state;
         for (j = 0; j < NUM_OF_SET; j=j+1) begin
             old[j] <= next_old[j];
