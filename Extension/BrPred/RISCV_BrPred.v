@@ -1,27 +1,10 @@
-// v1
-// stall when branch jump
-// v2
-// detect EX data hazard at ID stage, remove EX_rs1, EX_rs2, EX_R_type..., add EX_data_hazard
-// v3
-// remove PC_4, combine PC+4 to jump_addr, use one adder
-// WB stage don't stall when DCACHE_stall
-// DCACHE_wdata uses next_reg_file
-// optimize ID data hazard
-// v3.1
-// stall 2 cycle when lw + jalr, R-type or I-type + jalr, add jalr_hazard
-// jalr R[rs1] modified (jump_addr)
-// v5
-// add branch to jalr_hazard
-// jalr/ branch/ PC+4 use diff adder for shorten critical path
-
-// v5.3
-// Reduce 1 adder (2??) and change SLT computation
-// sdc = 3.0
-// area = 285095.3
-// tb = 3.0 (total 6025.5ns)
-// sdc = 2.6
-// area = 304150.3
-// tb = 2.7 (total 5474.25ns)
+// Branch Prediction
+// Difference betweeb this module and baseline
+// 1. Branch Prediction
+//      Do Branch Prediction in IF stage and compensate in ID stage
+// 2. Jal
+//      Do Jal along with Branch prediction in IF stage
+// 3. Cancel the Jalr-hazard for beq and bne
 
 module BEQ_Prediction_Unit(
     clk,
@@ -240,6 +223,7 @@ wire        IF_Jal, IF_Branch, IF_BranchNot;
 reg  [31:0] IF_imm;
 wire [31:0] IF_BJ_addr;         // beq, bne, jal
 wire [31:0] IF_True_addr;
+reg  [31:0] ID_B_addr, next_ID_B_addr;
 // --------------------------------------------
 //                COMBINATIONAL
 // --------------------------------------------
@@ -248,7 +232,7 @@ BEQ_Prediction_Unit beqPR(
     .clk(clk)                                                                   ,
     .rst_n(rst_n)                                                               ,
     .stall(ICACHE_stall || DCACHE_stall || load_use_hazard || jalr_hazard)      ,
-    .ID_Branch(beq)                                                             ,
+    .ID_Branch(beq | bne)                                                             ,
     .PreWrong(beqPR_PreWrong)                                                   ,
     .Prediction(beqPR_Prediction)       
 );
@@ -279,7 +263,7 @@ assign ICACHE_addr  = PC;
 assign ICACHE_wdata = 32'd0;
 
 // assign PC_jump = branch_jump | jal | jalr;
-assign PC_jump = beqPR_PreWrong | jalr;
+assign PC_jump = ((beq | bne) && beqPR_PreWrong) | jalr;
 
 wire [31:0] real_PC, real_ID_PC;
 assign real_PC = PC << 2;
@@ -292,7 +276,7 @@ always @(*) begin
     end
     //=============================================
     // Branch prediction
-    else if(beq && beqPR_PreWrong) begin
+    else if((beq | bne) && beqPR_PreWrong) begin
         next_PC = IF_True_addr[31:2];
     end
     else if(beqPR_Prediction && IF_Branch || IF_Jal) begin
@@ -307,15 +291,18 @@ always @(*) begin
     if (ICACHE_stall || DCACHE_stall || jalr_hazard) begin
         next_ID_PC = ID_PC;
         next_ID_instr = ID_instr;
+        next_ID_B_addr = ID_B_addr;
     end
     else if (PC_jump) begin
         next_ID_PC = 0;
         next_ID_instr = NO_OPERATION;
+        next_ID_B_addr = 0;
     end
     else begin
         next_ID_PC = PC;
         next_ID_instr = { ICACHE_rdata[7:0],   ICACHE_rdata[15:8], 
                           ICACHE_rdata[23:16], ICACHE_rdata[31:24] }; // little endian conversion
+        next_ID_B_addr = IF_BJ_addr;
     end
 end
 
@@ -406,31 +393,31 @@ always @(*) begin
             jalr_hazard = 1'b1;
         end
     end
-    else if (beq || bne) begin
-        // ID_data_hazard_A == EX_FORWARD || ID_data_hazard_B == EX_FORWARD
-        if ((EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) ||
-            (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write)) begin
-            jalr_hazard = 1'b1;
-        end
-        // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
-        // (ID_data_hazard_A == MEM_FORWARD || ID_data_hazard_B == MEM_FORWARD) && MEM_mem_read
-        else if (((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) ||
-                    (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write)) && MEM_mem_read) begin
-            jalr_hazard = 1'b1;
-        end
-    end
+    // else if (beq || bne) begin
+    //     // ID_data_hazard_A == EX_FORWARD || ID_data_hazard_B == EX_FORWARD
+    //     if ((EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) ||
+    //         (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write)) begin
+    //         jalr_hazard = 1'b1;
+    //     end
+    //     // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
+    //     // (ID_data_hazard_A == MEM_FORWARD || ID_data_hazard_B == MEM_FORWARD) && MEM_mem_read
+    //     else if (((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) ||
+    //                 (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write)) && MEM_mem_read) begin
+    //         jalr_hazard = 1'b1;
+    //     end
+    // end
     //end
 end
 
 // immediate generate
 always @(*) begin
-    if (beq | bne) begin // branch equal or branch not equal
-        imm = { {20{ID_instr[31]}}, ID_instr[7], ID_instr[30:25], ID_instr[11:8], 1'b0 };
-    end
+    // if (beq | bne) begin // branch equal or branch not equal
+    //     imm = { {20{ID_instr[31]}}, ID_instr[7], ID_instr[30:25], ID_instr[11:8], 1'b0 };
+    // end
     // else if (jal)  begin // jal
     //     imm = { {12{ID_instr[31]}}, ID_instr[19:12], ID_instr[20], ID_instr[30:25], ID_instr[24:21], 1'b0};
     // end
-    else if (mem_write)  begin // sw
+    if (mem_write)  begin // sw
         imm = {{21{ID_instr[31]}}, ID_instr[30:25], ID_instr[11:7]};
     end
     else if (func3 == 3'b001 | func3 == 3'b101) begin // SRAI, SRLI, SLLI
@@ -514,11 +501,13 @@ always @(*) begin
     cmp_in_2 = 0;
     if (beq || bne) begin
         case(ID_data_hazard_A)
+            EX_FORWARD:  cmp_in_1 = alu_out;
             MEM_FORWARD: cmp_in_1 = MEM_alu_out;
             WB_FORWARD:  cmp_in_1 = WB_wb_data;
             default:     cmp_in_1 = reg_file[rs1];
         endcase
         case(ID_data_hazard_B)
+            EX_FORWARD:  cmp_in_2 = alu_out;
             MEM_FORWARD: cmp_in_2 = MEM_alu_out;
             WB_FORWARD:  cmp_in_2 = WB_wb_data;
             default:     cmp_in_2 = reg_file[rs2];
@@ -531,11 +520,11 @@ end
 // assign jump_addr_adder_out = jump_addr_adder_in1 + jump_addr_adder_in2;
 reg  [31:0]  branch_addr, jalr_addr, default_addr;
 
-assign IF_True_addr =  (beqPR_Prediction) ? ($signed(ID_PC << 2) + 4) : branch_addr;
+assign IF_True_addr =  (beqPR_Prediction) ? ($signed(ID_PC << 2) + 4) : ID_B_addr;
 
 always @(*) begin
     // jump_addr = jump_addr_adder_out;
-    branch_addr = $signed(ID_PC << 2) + $signed(imm);
+    // branch_addr = $signed(ID_PC << 2) + $signed(imm);
     jalr_addr = $signed(jump_addr_add1) + $signed(imm);
 
     case(ID_data_hazard_A)
@@ -767,6 +756,8 @@ always @(posedge clk) begin
         WB_wb_data     <= 32'd0;
         WB_reg_rd      <= 5'd0;
         WB_reg_write   <= 1'd0;
+
+        ID_B_addr      <= 32'd0;
     end
     else begin
         ID_instr       <= next_ID_instr;
@@ -793,6 +784,8 @@ always @(posedge clk) begin
         WB_wb_data     <= next_WB_wb_data;
         WB_reg_rd      <= next_WB_reg_rd;
         WB_reg_write   <= next_WB_reg_write;
+
+        ID_B_addr      <= next_ID_B_addr;
     end
     
 end

@@ -2,7 +2,7 @@
 // the program will output an error message, 
 // and then TestBed will notice sth wrong.
 // a : # never      branch
-// b : # interleave branch
+// b : # interleave branch (alternating)
 // c : # always     branch
 
 13_00_00_00 // 000000000000_00000_000_00000_0010011    //0x00// nop
