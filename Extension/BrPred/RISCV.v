@@ -1,63 +1,4 @@
-// Branch Prediction
-// Difference betweeb this module and baseline
-// 1. Branch Prediction
-//      Do Branch Prediction in IF stage and compensate in ID stage
-// 2. Jal
-//      Do Jal along with Branch prediction in IF stage
-// 3. Cancel the Jalr-hazard for beq and bne
-
-module BEQ_Prediction_Unit(
-    clk,
-    rst_n,
-    stall,
-    ID_Branch,    
-    PreWrong,
-    Prediction
-);
-    input           clk;
-    input           rst_n;
-    input           stall;          // stall signal from cache or hazard detection unit
-    input           ID_Branch;      // branch signal (ID-stage)
-    input           PreWrong;       // miss prediction signal sent from the comparator
-    output          Prediction;     // Prediction Output (1 for taken and 0 for not)
-
-    // ============ parameter ============
-    parameter       STRONG_TAKEN    = 2'b00;
-    parameter       WEAK_TAKEN      = 2'b01;
-    parameter       STRONG_NOTTAKEN = 2'b10;
-    parameter       WEAK_NOTTAKEN   = 2'b11;
-
-    // ============ reg/write ============
-    reg  [1:0]      state, next_state;
-    wire            taken;  
-    // ============ Combinational ============
-    assign taken = (Prediction && (~PreWrong)) || ((~Prediction) && PreWrong); 
-    assign Prediction = ~state[1];
-    
-    // FSM (state output)
-    always@(*) begin
-        next_state = state;
-        if(stall | ~ID_Branch) begin
-            next_state = state;
-        end
-        else begin
-            next_state = state;
-            case(state)
-                STRONG_TAKEN:       next_state = taken ? STRONG_TAKEN : WEAK_TAKEN;
-                WEAK_TAKEN:         next_state = taken ? STRONG_TAKEN : WEAK_NOTTAKEN;
-                STRONG_NOTTAKEN:    next_state = taken ? WEAK_NOTTAKEN : STRONG_NOTTAKEN;
-                WEAK_NOTTAKEN:      next_state = taken ? WEAK_TAKEN : STRONG_NOTTAKEN;
-            endcase
-        end
-    end
-    // ============ Sequential ============
-    always @(posedge clk) begin
-        if(!rst_n)  state <= 0;
-        else        state <= next_state;
-    end
-
-
-endmodule
+// Original RISCV (no stall cycle for jalr hazard)
 
 module RISCV_Pipeline (
     clk           ,
@@ -141,6 +82,7 @@ integer i;
 // --------------------------------------------
 
 // feedback FFs
+wire [31:0] real_PC; // FIXME
 reg  [29:0] PC, next_PC; // use 30 bits for PC
 reg  [31:0] reg_file [0:REG_AMOUNT-1];
 reg  [31:0] next_reg_file [0:REG_AMOUNT-1];
@@ -150,6 +92,8 @@ reg  [31:0] next_reg_file [0:REG_AMOUNT-1];
 // IF/ID
 reg  [31:0] ID_instr,       next_ID_instr;       // instruction
 reg  [29:0] ID_PC,          next_ID_PC;          // use 30 bits for PC
+wire [31:0] real_ID_PC; // FIXME
+assign real_ID_PC = ID_PC << 2;
 
 // ID/EX
 reg   [4:0] EX_reg_rd,      next_EX_reg_rd;      // register rd
@@ -192,6 +136,7 @@ wire        jal;
 wire        jalr;
 wire        beq;
 wire        bne;
+reg         branch_jump; // 1 for beq or bne need to jump
 
 reg   [3:0] alu_control;
 wire        reg_write;
@@ -203,9 +148,11 @@ reg  [31:0] reg_file_r1; // read data from reg_file
 reg  [31:0] reg_file_r2; // read data from reg_file
 reg  [31:0] jump_addr;   // instruction address for branch, jal, jalr jumping
 reg  [31:0] jump_addr_add1;
+// reg  [31:0] jump_addr_adder_in1, jump_addr_adder_in2;
+// wire [31:0] jump_addr_adder_out;
 
 reg         load_use_hazard;
-reg         jalr_hazard;
+// reg         jalr_hazard;
 reg   [2:0] ID_data_hazard_A;
 reg   [2:0] ID_data_hazard_B;
 
@@ -216,97 +163,61 @@ reg  [31:0] alu_out;
 reg  [31:0] alu_sub_result;
 
 // Beq Prediction Unit
-wire        beqPR_PreWrong;
-wire        beqPR_Prediction;  
 wire [31:0] IF_instr;
-wire        IF_Jal, IF_Branch, IF_BranchNot;
+wire        IF_Jal;
 reg  [31:0] IF_imm;
 wire [31:0] IF_BJ_addr;         // beq, bne, jal
-wire [31:0] IF_True_addr;
-reg  [31:0] ID_B_addr, next_ID_B_addr, ID_default_addr, next_ID_default_addr;
-reg  [31:0] default_addr;
+
 // --------------------------------------------
 //                COMBINATIONAL
 // --------------------------------------------
 
-BEQ_Prediction_Unit beqPR(
-    .clk(clk)                                                                   ,
-    .rst_n(rst_n)                                                               ,
-    .stall(ICACHE_stall || DCACHE_stall || load_use_hazard || jalr_hazard)      ,
-    .ID_Branch(beq | bne)                                                             ,
-    .PreWrong(beqPR_PreWrong)                                                   ,
-    .Prediction(beqPR_Prediction)       
-);
-
 // -----------------IF stage-------------------
 
-//=============================================
 // Branch Prediction
 assign IF_instr = { ICACHE_rdata[7:0], ICACHE_rdata[15:8], ICACHE_rdata[23:16], ICACHE_rdata[31:24]};
-assign IF_Branch = (IF_instr[6:0] == OPCODE_BRANCH) & (IF_instr[14:13] == 2'b00); // beq, bne
 assign IF_Jal = (IF_instr[6:0] == OPCODE_JAL);
 assign IF_BJ_addr = $signed(PC << 2) + $signed(IF_imm); 
 always@(*) begin
-    // move jal to IF stage
-    if (IF_Jal)  begin // jal
-        IF_imm = { {12{IF_instr[31]}}, IF_instr[19:12], IF_instr[20], IF_instr[30:25], IF_instr[24:21], 1'b0};
-    end
-    else begin // branch equal or branch not equal
-        IF_imm = { {20{IF_instr[31]}}, IF_instr[7], IF_instr[30:25], IF_instr[11:8], 1'b0 };
-    end
+    IF_imm = { {12{IF_instr[31]}}, IF_instr[19:12], IF_instr[20], IF_instr[30:25], IF_instr[24:21], 1'b0};
 end
-// ============================================
 
+assign real_PC = PC << 2; // FIXME
 // read I-CACHE
 assign ICACHE_ren   = 1'b1;
 assign ICACHE_wen   = 1'b0;
 assign ICACHE_addr  = PC;
 assign ICACHE_wdata = 32'd0;
 
-// assign PC_jump = branch_jump | jal | jalr;
-assign PC_jump = ((beq | bne) && beqPR_PreWrong) | jalr;
-
-wire [31:0] real_PC, real_ID_PC;
-assign real_PC = PC << 2;
-assign real_ID_PC = ID_PC << 2;
-
+assign PC_jump = branch_jump | jalr;
 always @(*) begin
     next_PC = PC;
-    if (ICACHE_stall || DCACHE_stall || load_use_hazard || jalr_hazard) begin
+    if (ICACHE_stall || DCACHE_stall || load_use_hazard) begin
         next_PC = PC;
     end
-    //=============================================
-    // Branch prediction
-    else if((beq | bne) && beqPR_PreWrong) begin
-        next_PC = IF_True_addr[31:2];
+    else if(branch_jump || jalr)begin
+        next_PC = jump_addr[31:2];
     end
-    else if(beqPR_Prediction && IF_Branch || IF_Jal) begin
+    else if(IF_Jal) begin
         next_PC = IF_BJ_addr[31:2];
     end
     else next_PC = jump_addr[31:2];
-    //=============================================
 end
 
 // IF/ID FFs
 always @(*) begin
-    if (ICACHE_stall || DCACHE_stall || load_use_hazard || jalr_hazard) begin
+    if (ICACHE_stall || DCACHE_stall || load_use_hazard) begin
         next_ID_PC = ID_PC;
         next_ID_instr = ID_instr;
-        next_ID_B_addr = ID_B_addr;
-        next_ID_default_addr = ID_default_addr;
     end
     else if (PC_jump) begin
         next_ID_PC = 0;
         next_ID_instr = NO_OPERATION;
-        next_ID_B_addr = 0;
-        next_ID_default_addr = 0;
     end
     else begin
         next_ID_PC = PC;
         next_ID_instr = { ICACHE_rdata[7:0],   ICACHE_rdata[15:8], 
-                          ICACHE_rdata[23:16], ICACHE_rdata[31:24] }; // little endian conversion
-        next_ID_B_addr = IF_BJ_addr;
-        next_ID_default_addr = default_addr;
+                          ICACHE_rdata[23:16], ICACHE_rdata[31:24] };
     end
 end
 
@@ -379,49 +290,48 @@ always @(*) begin
     end
 end
 
-// detect jalr hazard (jalr, beq, bne)
-// Consider the case jalr need reg[rs1] but the rs1 is still in EX or MEM stage
-// When this situation happens, we will stall one cycle.
-// Stall the cycle can shorten the critical path sharply.
-
-always @(*) begin
-    jalr_hazard = 1'b0;
-    if (jalr) begin
-        // ID_data_hazard_A == EX_FORWARD
-        if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin
-            jalr_hazard = 1'b1;
-        end
-        // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
-        // ID_data_hazard_A == MEM_FORWARD && MEM_mem_read
-        else if ((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) && MEM_mem_read) begin
-            jalr_hazard = 1'b1;
-        end
-    end
-    // else if (beq || bne) begin
-    //     // ID_data_hazard_A == EX_FORWARD || ID_data_hazard_B == EX_FORWARD
-    //     if ((EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) ||
-    //         (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write)) begin
-    //         jalr_hazard = 1'b1;
-    //     end
-    //     // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
-    //     // (ID_data_hazard_A == MEM_FORWARD || ID_data_hazard_B == MEM_FORWARD) && MEM_mem_read
-    //     else if (((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) ||
-    //                 (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write)) && MEM_mem_read) begin
-    //         jalr_hazard = 1'b1;
-    //     end
-    // end
-    //end
-end
+// detect jalr hazard
+// always @(*) begin
+//     jalr_hazard = 1'b0;
+//     // if (!load_use_hazard) begin
+//         if (jalr) begin
+//             // ID_data_hazard_A == EX_FORWARD
+//             if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin
+//                 jalr_hazard = 1'b1;
+//             end
+//             // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
+//             // ID_data_hazard_A == MEM_FORWARD && MEM_mem_read
+//             else if ((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) && MEM_mem_read) begin
+//                 jalr_hazard = 1'b1;
+//             end
+//         end
+//         else if (beq || bne) begin
+//             // ID_data_hazard_A == EX_FORWARD || ID_data_hazard_B == EX_FORWARD
+//             if ((EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) ||
+//                 (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write)) begin
+//                 jalr_hazard = 1'b1;
+//             end
+//             // ex: lw + jalr, critical path will be Dcache in >> Dcache hit >> Dcache_rdata >> PC adder
+//             // (ID_data_hazard_A == MEM_FORWARD || ID_data_hazard_B == MEM_FORWARD) && MEM_mem_read
+//             else if (((MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) ||
+//                       (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write)) && MEM_mem_read) begin
+//                 jalr_hazard = 1'b1;
+//             end
+//         end
+//     //end
+// end
 
 // immediate generate
 always @(*) begin
-    // if (beq | bne) begin // branch equal or branch not equal
-    //     imm = { {20{ID_instr[31]}}, ID_instr[7], ID_instr[30:25], ID_instr[11:8], 1'b0 };
-    // end
+    if (beq | bne) begin // branch equal or branch not equal
+        imm = { {20{ID_instr[31]}}, ID_instr[7],
+               ID_instr[30:25], ID_instr[11:8], 1'b0 };
+    end
     // else if (jal)  begin // jal
-    //     imm = { {12{ID_instr[31]}}, ID_instr[19:12], ID_instr[20], ID_instr[30:25], ID_instr[24:21], 1'b0};
+    //     imm = { {12{ID_instr[31]}}, ID_instr[19:12], 
+    //             ID_instr[20], ID_instr[30:25], ID_instr[24:21], 1'b0};
     // end
-    if (mem_write)  begin // sw
+    else if (mem_write)  begin // sw
         imm = {{21{ID_instr[31]}}, ID_instr[30:25], ID_instr[11:7]};
     end
     else if (func3 == 3'b001 | func3 == 3'b101) begin // SRAI, SRLI, SLLI
@@ -443,10 +353,9 @@ always @(*) begin
     end
 end
 
-// detect ID data hazard and transmit the signal to EX stage
-// Doing so can save the FF used to transmit RS1 RS2...
+// detect ID data hazard
 always@ (*) begin
-    if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin
+    if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
         ID_data_hazard_A = EX_FORWARD;
     end
     else if (MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) begin
@@ -459,7 +368,7 @@ always@ (*) begin
         ID_data_hazard_A = NO_HAZARD;
     end
 
-    if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin
+    if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
         ID_data_hazard_B = EX_FORWARD;
     end
     else if (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write) begin
@@ -473,9 +382,8 @@ always@ (*) begin
     end
 end
 
-// ===============================================================================
 // forwarding
-always @(*) begin
+always @(*) begin // FIXME:  only consider WB_FORWARD
     case(ID_data_hazard_A)
         NO_HAZARD:   reg_file_r1 = reg_file[rs1];
         EX_FORWARD:  reg_file_r1 = alu_out;
@@ -497,10 +405,8 @@ end
 reg  [31:0] cmp_in_1, cmp_in_2;
 wire        cmp_out;
 assign cmp_out = cmp_in_1 == cmp_in_2;
-
-assign beqPR_PreWrong = !jalr_hazard & ((beq & (beqPR_Prediction != cmp_out)) | (bne & (beqPR_Prediction == cmp_out)));
-//                                                    beq jump        equal               bne jump            equal         
 always @(*) begin
+    branch_jump = ((beq && cmp_out) || (bne && !cmp_out));
     cmp_in_1 = 0;
     cmp_in_2 = 0;
     if (beq || bne) begin
@@ -518,19 +424,21 @@ always @(*) begin
         endcase
     end
 end
-// ===============================================================================
+// assign branch_jump = !jalr_hazard &&
+//                      ((beq && (reg_file_r1 == reg_file_r2)) ||
+//                      (bne && (reg_file_r1 != reg_file_r2)));
 
 // jump address
 // assign jump_addr_adder_out = jump_addr_adder_in1 + jump_addr_adder_in2;
-reg  [31:0]  branch_addr;
+reg  [31:0]  branch_jal_addr, default_addr;
 wire [31:0] jalr_addr;
-assign IF_True_addr =  (beqPR_Prediction) ? (ID_default_addr) : ID_B_addr;
 assign jalr_addr = $signed(jump_addr_add1) + $signed(imm);
 always @(*) begin
     // jump_addr = jump_addr_adder_out;
-    // branch_addr = $signed(ID_PC << 2) + $signed(imm);
+    branch_jal_addr = $signed(ID_PC << 2) + $signed(imm);
 
     case(ID_data_hazard_A)
+        EX_FORWARD:  jump_addr_add1 = alu_out;
         MEM_FORWARD: jump_addr_add1 = MEM_alu_out;
         WB_FORWARD:  jump_addr_add1 = WB_wb_data;
         default:     jump_addr_add1 = reg_file[rs1];
@@ -541,7 +449,10 @@ always @(*) begin
 
     default_addr = $signed(PC << 2) + 4;
 
-    if (jalr) begin
+    if (branch_jump) begin
+        jump_addr = branch_jal_addr;
+    end
+    else if (jalr) begin
         jump_addr = jalr_addr;
     end
     else begin
@@ -555,7 +466,7 @@ always @(*) begin
         next_EX_data_hazard_A = EX_data_hazard_A;
         next_EX_data_hazard_B = EX_data_hazard_B;
     end
-    else if (load_use_hazard || jalr_hazard || ICACHE_stall) begin
+    else if (load_use_hazard || ICACHE_stall) begin
         next_EX_data_hazard_A = NO_HAZARD;
         next_EX_data_hazard_B = NO_HAZARD;
     end
@@ -590,22 +501,22 @@ end
 // ID/EX FFs
 always @(*) begin
     next_EX_jal         = DCACHE_stall    ? EX_jal         : // DCACHE_stall >> do again
-                          load_use_hazard || jalr_hazard || ICACHE_stall ? 0              : // load use hazard >> bubble
+                          load_use_hazard || ICACHE_stall ? 0              : // load use hazard >> bubble
                           jal;
     next_EX_jalr        = DCACHE_stall    ? EX_jalr        : 
-                          load_use_hazard || jalr_hazard || ICACHE_stall ? 0              :
+                          load_use_hazard || ICACHE_stall ? 0              :
                           jalr;
     next_EX_alu_control = DCACHE_stall    ? EX_alu_control :
-                          load_use_hazard || jalr_hazard || ICACHE_stall ? ALU_NO         :
+                          load_use_hazard || ICACHE_stall ? ALU_NO         :
                           alu_control;
     next_EX_reg_write   = DCACHE_stall    ? EX_reg_write   :
-                          load_use_hazard || jalr_hazard || ICACHE_stall ? 0              :
+                          load_use_hazard || ICACHE_stall ? 0              :
                           reg_write;
     next_EX_mem_read    = DCACHE_stall    ? EX_mem_read    :
-                          load_use_hazard || jalr_hazard || ICACHE_stall ? 0              :
+                          load_use_hazard || ICACHE_stall ? 0              :
                           mem_read;
     next_EX_mem_write   = DCACHE_stall    ? EX_mem_write   :
-                          load_use_hazard || jalr_hazard || ICACHE_stall ? 0              :
+                          load_use_hazard || ICACHE_stall ? 0              :
                           mem_write;
 
     // rd
@@ -690,6 +601,8 @@ assign DCACHE_wen   = MEM_mem_write;
 assign DCACHE_addr  = MEM_alu_out[31:2];
 assign DCACHE_wdata = { reg_file[MEM_reg_rd][7:0]  , reg_file[MEM_reg_rd][15:8],
                         reg_file[MEM_reg_rd][23:16], reg_file[MEM_reg_rd][31:24] }; // FIXME
+
+
 wire  [31:0] answer;
 assign answer = reg_file[MEM_reg_rd];
 
@@ -759,9 +672,6 @@ always @(posedge clk) begin
         WB_wb_data     <= 32'd0;
         WB_reg_rd      <= 5'd0;
         WB_reg_write   <= 1'd0;
-
-        ID_B_addr      <= 32'd0;
-        ID_default_addr<= 32'd0;
     end
     else begin
         ID_instr       <= next_ID_instr;
@@ -788,9 +698,6 @@ always @(posedge clk) begin
         WB_wb_data     <= next_WB_wb_data;
         WB_reg_rd      <= next_WB_reg_rd;
         WB_reg_write   <= next_WB_reg_write;
-
-        ID_B_addr      <= next_ID_B_addr;
-        ID_default_addr<= next_ID_default_addr;
     end
     
 end
