@@ -6,7 +6,7 @@
 //      Do Jal along with Branch prediction in IF stage
 // 3. Cancel the Jalr-hazard for beq and bne
 
-// 2.6 synthesis
+// 3.2 synthesis
 
 module BEQ_Prediction_Unit(
     clk,
