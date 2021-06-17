@@ -6,12 +6,16 @@
 //      Do Jal along with Branch prediction in IF stage
 // 3. Cancel the Jalr-hazard for beq and bne
 
-// 2.6 synthesis
+// 4. modified: add buffer in BPU
+
+// synthesis: 3.3
 
 module BEQ_Prediction_Unit(
     clk,
     rst_n,
     stall,
+    IF_PC,
+    IF_Branch,
     ID_Branch,    
     PreWrong,
     Prediction
@@ -19,9 +23,11 @@ module BEQ_Prediction_Unit(
     input           clk;
     input           rst_n;
     input           stall;          // stall signal from cache or hazard detection unit
+    input [29:0]    IF_PC;
+    input           IF_Branch;
     input           ID_Branch;      // branch signal (ID-stage)
     input           PreWrong;       // miss prediction signal sent from the comparator
-    output          Prediction;     // Prediction Output (1 for taken and 0 for not)
+    output reg      Prediction;     // Prediction Output (1 for taken and 0 for not)
 
     // ============ parameter ============
     parameter       STRONG_TAKEN    = 2'b00;
@@ -30,32 +36,151 @@ module BEQ_Prediction_Unit(
     parameter       WEAK_NOTTAKEN   = 2'b11;
 
     // ============ reg/write ============
-    reg  [1:0]      state, next_state;
+    integer i, j;
     wire            taken;  
+
+    // reg for buffer (fully associative cache)
+    reg             buf_valid       [0:3];
+    reg  [29:0]     buf_addr        [0:3];
+    reg  [1:0]      buf_state       [0:3];
+    reg             buf_status      [0:3];
+
+    reg             next_buf_valid       [0:3];
+    reg  [29:0]     next_buf_addr        [0:3];
+    reg  [1:0]      next_buf_state       [0:3];
+    reg             next_buf_status      [0:3];
+
+    // other signals for buffer
+    reg             hit, clear;
+    reg  [1:0]      IF_index, ID_index;  
+    wire [1:0]      next_ID_index;    
+    reg             buf_hit         [0:3];
+    reg             ID_Prediction;
+
     // ============ Combinational ============
-    assign taken = (Prediction && (~PreWrong)) || ((~Prediction) && PreWrong); 
-    assign Prediction = ~state[1];
+    assign next_ID_index = stall ? ID_index : IF_index;
     
-    // FSM (state output)
     always@(*) begin
-        next_state = state;
-        if(stall | ~ID_Branch) begin
-            next_state = state;
+        for(i = 0; i < 4; i = i+1) begin
+            buf_hit[i] = (IF_PC == buf_addr[i]) & buf_valid[i];
         end
+        hit = buf_hit[0] | buf_hit[1] | buf_hit[2] | buf_hit[3];
+        clear = buf_status[0] & buf_status[1] & buf_status[2] & buf_status[3];
+    end
+    
+    assign taken = (ID_Prediction && (~PreWrong)) || ((~ID_Prediction) && PreWrong); 
+    
+    // output logic (give to IF stage)
+    always@(*) begin
+        if     (buf_hit[0]) Prediction = ~buf_state[0][1];
+        else if(buf_hit[1]) Prediction = ~buf_state[1][1];
+        else if(buf_hit[2]) Prediction = ~buf_state[2][1];
+        else if(buf_hit[3]) Prediction = ~buf_state[3][1];
         else begin
-            next_state = state;
-            case(state)
-                STRONG_TAKEN:       next_state = taken ? STRONG_TAKEN : WEAK_TAKEN;
-                WEAK_TAKEN:         next_state = taken ? STRONG_TAKEN : WEAK_NOTTAKEN;
-                STRONG_NOTTAKEN:    next_state = taken ? WEAK_NOTTAKEN : STRONG_NOTTAKEN;
-                WEAK_NOTTAKEN:      next_state = taken ? WEAK_TAKEN : STRONG_NOTTAKEN;
-            endcase
+            Prediction = 1; // default: WEAK_TAKEN 
         end
     end
+
+    // buffer logic
+    always@(*) begin
+        // default
+        for(i = 0; i < 4; i = i+1) begin
+            next_buf_valid[i]  = buf_valid[i];
+            next_buf_addr[i]   = buf_addr[i];
+            next_buf_state[i]  = buf_state[i];
+            next_buf_status[i] = buf_status[i];
+        end
+        IF_index = 0;
+        
+        if(~stall & IF_Branch) begin
+            // HIT
+            if(buf_hit[0]) begin
+                next_buf_status[0] = 1;
+                IF_index = 0;
+            end
+            else if(buf_hit[1]) begin
+                next_buf_status[1] = 1;
+                IF_index = 1;
+            end
+            else if(buf_hit[2]) begin
+                next_buf_status[2] = 1;
+                IF_index = 2;
+            end
+            else if(buf_hit[3]) begin
+                next_buf_status[3] = 1;
+                IF_index = 3;
+            end
+            // MISS
+            if(~hit) begin
+                if(~buf_status[0]) begin
+                    next_buf_state[0] = WEAK_TAKEN;
+                    next_buf_valid[0] = 1;
+                    next_buf_addr[0] = IF_PC;
+                    next_buf_status[0] = 1;
+                    IF_index = 0;
+                end
+                else if(~buf_status[1]) begin
+                    next_buf_state[1] = WEAK_TAKEN;
+                    next_buf_valid[1] = 1;
+                    next_buf_addr[1] = IF_PC;
+                    next_buf_status[1] = 1;
+                    IF_index = 1;
+                end
+                else if(~buf_status[2]) begin
+                    next_buf_state[2] = WEAK_TAKEN;
+                    next_buf_valid[2] = 1;
+                    next_buf_addr[2] = IF_PC;
+                    next_buf_status[2] = 1;
+                    IF_index = 2;
+                end
+                else if(~buf_status[3]) begin
+                    next_buf_state[3] = WEAK_TAKEN;
+                    next_buf_valid[3] = 1;
+                    next_buf_addr[3] = IF_PC;
+                    next_buf_status[3] = 1;
+                    IF_index = 3;
+                end
+            end 
+        end
+        // ID : correction
+        if(~stall & ID_Branch) begin
+            case(buf_state[ID_index])
+                STRONG_TAKEN:       next_buf_state[ID_index] = taken ? STRONG_TAKEN : WEAK_TAKEN;
+                WEAK_TAKEN:         next_buf_state[ID_index] = taken ? STRONG_TAKEN : WEAK_NOTTAKEN;
+                STRONG_NOTTAKEN:    next_buf_state[ID_index] = taken ? WEAK_NOTTAKEN : STRONG_NOTTAKEN;
+                WEAK_NOTTAKEN:      next_buf_state[ID_index] = taken ? WEAK_TAKEN : STRONG_NOTTAKEN;
+            endcase
+            if(clear) begin
+                for(j = 0; j < 4; j = j+1) begin
+                    next_buf_status[j] = 0;
+                end
+            end
+        end
+    end
+    
+    
     // ============ Sequential ============
     always @(posedge clk) begin
-        if(!rst_n)  state <= 0;
-        else        state <= next_state;
+        if(!rst_n)  begin
+            for(i = 0; i < 4; i = i+1) begin
+                buf_valid [i] <= 0;
+                buf_addr  [i] <= 0;
+                buf_state [i] <= 0;
+                buf_status[i] <= 0;
+            end
+            ID_index <= 0;
+            ID_Prediction <= 0;
+        end
+        else begin
+            for(i = 0; i < 4; i = i+1) begin
+                buf_valid [i] <= next_buf_valid[i];
+                buf_addr  [i] <= next_buf_addr[i];
+                buf_state [i] <= next_buf_state[i];
+                buf_status[i] <= next_buf_status[i];
+            end
+            ID_index <= next_ID_index;
+            ID_Prediction <= Prediction;
+        end
     end
 
 
@@ -220,6 +345,7 @@ reg  [31:0] alu_sub_result;
 // Beq Prediction Unit
 wire        beqPR_PreWrong;
 wire        beqPR_Prediction;  
+reg         ID_Prediction;   
 wire [31:0] IF_instr;
 wire        IF_Jal, IF_Branch, IF_BranchNot;
 reg  [31:0] IF_imm;
@@ -235,7 +361,9 @@ BEQ_Prediction_Unit beqPR(
     .clk(clk)                                                                   ,
     .rst_n(rst_n)                                                               ,
     .stall(ICACHE_stall || DCACHE_stall || load_use_hazard || jalr_hazard)      ,
-    .ID_Branch(beq | bne)                                                             ,
+    .IF_PC(PC)                                                                  ,
+    .IF_Branch(IF_Branch)                                                       ,
+    .ID_Branch(beq | bne)                                                       ,
     .PreWrong(beqPR_PreWrong)                                                   ,
     .Prediction(beqPR_Prediction)       
 );
@@ -500,7 +628,7 @@ reg  [31:0] cmp_in_1, cmp_in_2;
 wire        cmp_out;
 assign cmp_out = cmp_in_1 == cmp_in_2;
 
-assign beqPR_PreWrong = !jalr_hazard & ((beq & (beqPR_Prediction != cmp_out)) | (bne & (beqPR_Prediction == cmp_out)));
+assign beqPR_PreWrong = !jalr_hazard & ((beq & (ID_Prediction != cmp_out)) | (bne & (ID_Prediction == cmp_out)));
 //                                                    beq jump        equal               bne jump            equal         
 always @(*) begin
     cmp_in_1 = 0;
@@ -526,7 +654,7 @@ end
 // assign jump_addr_adder_out = jump_addr_adder_in1 + jump_addr_adder_in2;
 reg  [31:0]  branch_addr;
 wire [31:0] jalr_addr;
-assign IF_True_addr =  (beqPR_Prediction) ? (ID_default_addr) : ID_B_addr;
+assign IF_True_addr =  (ID_Prediction) ? (ID_default_addr) : ID_B_addr;
 assign jalr_addr = $signed(jump_addr_add1) + $signed(imm);
 always @(*) begin
     // jump_addr = jump_addr_adder_out;
@@ -764,6 +892,7 @@ always @(posedge clk) begin
 
         ID_B_addr      <= 32'd0;
         ID_default_addr<= 32'd0;
+        ID_Prediction  <= 1'd0;
     end
     else begin
         ID_instr       <= next_ID_instr;
@@ -793,6 +922,7 @@ always @(posedge clk) begin
 
         ID_B_addr      <= next_ID_B_addr;
         ID_default_addr<= next_ID_default_addr;
+        ID_Prediction  <= beqPR_Prediction;
     end
     
 end
