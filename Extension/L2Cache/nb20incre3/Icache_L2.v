@@ -20,8 +20,8 @@ module Icache_L2(
     // processor interface
     input          proc_reset;
     input          proc_read, proc_write;
-    input   [29:0] proc_addr;
-    input   [31:0] proc_wdata;
+    input   [27:0] proc_addr;
+    input  [127:0] proc_wdata;
     output         proc_ready;
     output [127:0] proc_rdata;
     // memory interface
@@ -60,14 +60,13 @@ reg                    mem_ready_FF, next_mem_ready_FF;
 wire read;
 wire [27-SET_OFFSET:0] in_tag;
 wire [ SET_OFFSET-1:0] set_idx;
-wire [1:0] word_idx;
+// wire [1:0] word_idx;
 
 //==== combinational circuit ==============================
 integer i, l;
 assign read     = proc_read;
-assign in_tag   = proc_addr[29:2+SET_OFFSET];
-assign set_idx  = proc_addr[1+SET_OFFSET:2];
-assign word_idx = proc_addr[1:0];
+assign in_tag   = proc_addr[27:SET_OFFSET];
+assign set_idx  = proc_addr[SET_OFFSET-1:0];
 
 always @(*) begin
     next_mem_ready_FF = mem_ready;

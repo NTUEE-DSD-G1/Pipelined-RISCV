@@ -20,8 +20,8 @@ module Dcache_L2(
     // processor interface
     input          proc_reset;
     input          proc_read, proc_write;
-    input   [29:0] proc_addr;
-    input   [31:0] proc_wdata;
+    input   [27:0] proc_addr;
+    input  [127:0] proc_wdata;
     output         proc_ready;
     output [127:0] proc_rdata;
     // memory interface
@@ -32,15 +32,14 @@ module Dcache_L2(
     output [127:0] mem_wdata;
 
 //==== parameter ==========================================
-parameter NUM_OF_SET = 32;
+parameter NUM_OF_SET = 16;
 parameter NUM_OF_WAY = 2;
-parameter SET_OFFSET = 5;
+parameter SET_OFFSET = 4;
 
-parameter IDLE        = 3'd1;
-parameter READ_MEM    = 3'd2;
-parameter WRITE_MEM   = 3'd3;
-parameter DIRTY_WRITE = 3'd4;
-parameter DIRTY_READ  = 3'd5;
+parameter IDLE        = 2'd0;
+parameter READ_MEM    = 2'd1;
+parameter DIRTY_WRITE = 2'd2;
+parameter DIRTY_READ  = 2'd3;
 
 //==== wire/reg definition ================================
 // outputs 
@@ -51,7 +50,7 @@ reg [ 27:0] mem_addr;
 reg [127:0] mem_wdata;
 
 // FFs
-reg [3:0] state, next_state;
+reg [1:0] state, next_state;
 
 reg [127:0]            data[0:NUM_OF_SET-1][0:NUM_OF_WAY-1],  next_data[0:NUM_OF_SET-1][0:NUM_OF_WAY-1];
 reg [27-SET_OFFSET:0]  tag[0:NUM_OF_SET-1][0:NUM_OF_WAY-1],   next_tag[0:NUM_OF_SET-1][0:NUM_OF_WAY-1];
@@ -64,15 +63,13 @@ reg                    mem_ready_FF, next_mem_ready_FF;
 wire read, write;
 wire [27-SET_OFFSET:0] in_tag;
 wire [ SET_OFFSET-1:0] set_idx;
-wire [1:0] word_idx;
 
 //==== combinational circuit ==============================
 integer i, l;
 assign read     = proc_read & ~proc_write;
 assign write    = ~proc_read & proc_write;
-assign in_tag   = proc_addr[29:2+SET_OFFSET];
-assign set_idx  = proc_addr[1+SET_OFFSET:2];
-assign word_idx = proc_addr[1:0];
+assign in_tag   = proc_addr[27:SET_OFFSET];
+assign set_idx  = proc_addr[SET_OFFSET-1:0];
 
 always @(*) begin
     next_mem_ready_FF <= mem_ready;
@@ -124,14 +121,14 @@ always @(*) begin
             if (write) begin
                 if (valid[set_idx][0] && (tag[set_idx][0] == in_tag)) begin
                     next_state = IDLE;
-                    next_data[set_idx][0][(word_idx+1)*32-1 -: 32] = proc_wdata;
+                    next_data[set_idx][0] = proc_wdata;
                     next_dirty[set_idx][0] = 1'b1;
                     next_old[set_idx] = 1'b1;
                     proc_ready = 1'b1;
                 end
                 else if (valid[set_idx][1] && (tag[set_idx][1] == in_tag)) begin
                     next_state = IDLE;
-                    next_data[set_idx][1][(word_idx+1)*32-1 -: 32] = proc_wdata;
+                    next_data[set_idx][1] = proc_wdata;
                     next_dirty[set_idx][1] = 1'b1;
                     next_old[set_idx] = 1'b0;
                     proc_ready = 1'b1;
@@ -144,9 +141,12 @@ always @(*) begin
                         mem_wdata = data[set_idx][old[set_idx]];
                     end
                     else begin
-                        next_state = WRITE_MEM;
-                        mem_read = 1'b1;
-                        mem_addr = { in_tag, set_idx };
+                        next_state = IDLE;
+                        proc_ready = 1'b1;
+                        next_old[set_idx] = ~old[set_idx];
+                        next_valid[set_idx][old[set_idx]] = 1'b1;
+                        next_tag[set_idx][old[set_idx]] = in_tag;
+                        next_data[set_idx][old[set_idx]] = proc_wdata;
                     end
                 end
             end    
@@ -181,28 +181,14 @@ always @(*) begin
                 mem_write = 1'b1;
             end
         end
-        WRITE_MEM: begin
+        DIRTY_WRITE: begin
             if (mem_ready_FF) begin
                 next_state = IDLE;
                 proc_ready = 1'b1;
                 next_old[set_idx] = ~old[set_idx];
                 next_valid[set_idx][old[set_idx]] = 1'b1;
                 next_tag[set_idx][old[set_idx]] = in_tag;
-                next_data[set_idx][old[set_idx]] = mem_rdata;
-                next_data[set_idx][old[set_idx]][(word_idx+1)*32-1 -: 32] = proc_wdata;
-            end
-            else begin
-                next_state = WRITE_MEM;
-                mem_read = 1'b1;
-                mem_addr = { in_tag, set_idx };
-            end
-        end
-        DIRTY_WRITE: begin
-            if (mem_ready_FF) begin
-                next_state = WRITE_MEM;
-                mem_read = 1'b1;
-                mem_addr = { in_tag, set_idx };
-                next_dirty[set_idx][old[set_idx]] = 1'b0;
+                next_data[set_idx][old[set_idx]] = proc_wdata;
             end
             else begin
                 next_state = DIRTY_WRITE;

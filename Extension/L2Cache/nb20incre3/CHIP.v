@@ -65,15 +65,15 @@ wire [31:0]   DCACHE_rdata;
 
 wire          ICACHE_L2_ren;
 wire          ICACHE_L2_wen;
-wire [29:0]   ICACHE_L2_addr;
-wire [31:0]   ICACHE_L2_wdata;
+wire [27:0]   ICACHE_L2_addr;
+wire [127:0]  ICACHE_L2_wdata;
 wire          ICACHE_L2_ready;
 wire [127:0]  ICACHE_L2_rdata;
 
 wire          DCACHE_L2_ren;
 wire          DCACHE_L2_wen;
-wire [29:0]   DCACHE_L2_addr;
-wire [31:0]   DCACHE_L2_wdata;
+wire [27:0]   DCACHE_L2_addr;
+wire [127:0]  DCACHE_L2_wdata;
 wire          DCACHE_L2_ready;
 wire [127:0]  DCACHE_L2_rdata;
 

@@ -1,4 +1,4 @@
-// 2 Way associative ICache (read-only)
+// directed map ICache (read-only)
 module Icache(
     clk,
     proc_reset,
@@ -29,13 +29,12 @@ module Icache(
     input  [127:0] mem_rdata;
     input          mem_ready;
     output         mem_read, mem_write;
-    output  [27:0] mem_addr;
-    output [127:0] mem_wdata;
+    output  [29:0] mem_addr;
+    output  [31:0] mem_wdata;
 
 //==== parameter ==========================================
-parameter NUM_OF_SET = 4;
-parameter NUM_OF_WAY = 2;
-parameter SET_OFFSET = 2;
+parameter NUM_OF_BLOCK = 8;
+parameter BLOCK_OFFSET = 3;
 
 parameter IDLE = 1'd0;
 parameter READ_MEM = 1'd1;
@@ -45,23 +44,22 @@ parameter READ_MEM = 1'd1;
 reg         proc_stall;
 reg [ 31:0] proc_rdata;
 reg         mem_read, mem_write;
-reg [ 27:0] mem_addr;
+reg [ 29:0] mem_addr;
 reg [ 31:0] mem_wdata;
 
 // FFs
 reg                   state, next_state;
 
-reg [127:0]           data[0:NUM_OF_SET-1][0:NUM_OF_WAY-1],  next_data[0:NUM_OF_SET-1][0:NUM_OF_WAY-1];
-reg [27-SET_OFFSET:0] tag[0:NUM_OF_SET-1][0:NUM_OF_WAY-1],   next_tag[0:NUM_OF_SET-1][0:NUM_OF_WAY-1];
-reg                   valid[0:NUM_OF_SET-1][0:NUM_OF_WAY-1], next_valid[0:NUM_OF_SET-1][0:NUM_OF_WAY-1];
-reg                   old[0:NUM_OF_SET-1],                   next_old[0:NUM_OF_SET-1];
+reg [127:0]           data[0:NUM_OF_BLOCK-1],  next_data[0:NUM_OF_BLOCK-1];
+reg [27-SET_OFFSET:0] tag[0:NUM_OF_BLOCK-1],   next_tag[0:NUM_OF_BLOCK-1];
+reg                   valid[0:NUM_OF_BLOCK-1], next_valid[0:NUM_OF_BLOCK-1];
 
 reg                   mem_ready_FF, next_mem_ready_FF;
 reg [127:0]           mem_rdata_FF, next_mem_rdata_FF;
 
 wire read;
-wire [27-SET_OFFSET:0] in_tag;
-wire [1:0] set_idx;
+wire [27-BLOCK_OFFSET:0] in_tag;
+wire [BLOCK_OFFSET-1:0] block_idx;
 wire [1:0] word_idx;
 
 //==== combinational circuit ==============================
@@ -105,7 +103,7 @@ always @(*) begin
                 else begin
                     next_state = READ_MEM;
                     mem_read = 1'b1;
-                    mem_addr = { in_tag, set_idx };
+                    mem_addr = proc_addr;
                     proc_stall = 1'b1;
                 end
             end
@@ -123,7 +121,7 @@ always @(*) begin
             else begin
                 next_state = READ_MEM;
                 mem_read = 1'b1;
-                mem_addr = { in_tag, set_idx };
+                mem_addr = proc_addr;
                 proc_stall = 1'b1;
             end
         end
