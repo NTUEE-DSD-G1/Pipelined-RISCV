@@ -44,8 +44,8 @@ parameter READ_MEM = 1'd1;
 reg         proc_stall;
 reg [ 31:0] proc_rdata;
 reg         mem_read, mem_write;
-reg [ 29:0] mem_addr;
-reg [ 31:0] mem_wdata;
+reg [ 27:0] mem_addr;
+reg [127:0] mem_wdata;
 
 // FFs
 reg                   state, next_state;
@@ -55,7 +55,6 @@ reg [27-BLOCK_OFFSET:0] tag[0:NUM_OF_BLOCK-1],   next_tag[0:NUM_OF_BLOCK-1];
 reg                     valid[0:NUM_OF_BLOCK-1], next_valid[0:NUM_OF_BLOCK-1];
 
 reg                   mem_ready_FF, next_mem_ready_FF;
-reg [127:0]           mem_rdata_FF, next_mem_rdata_FF;
 
 wire read;
 wire [27-BLOCK_OFFSET:0] in_tag;
@@ -71,7 +70,6 @@ assign word_idx = proc_addr[1:0];
 
 always @(*) begin
     next_mem_ready_FF = mem_ready;
-    next_mem_rdata_FF = mem_rdata;
     next_state = state;
     proc_stall = 1'b0;
     proc_rdata = 0;
@@ -105,8 +103,8 @@ always @(*) begin
                 proc_stall = 1'b0;
                 next_valid[block_idx] = 1'b1;
                 next_tag[block_idx] = in_tag;
-                next_data[block_idx] = mem_rdata_FF;
-                proc_rdata = mem_rdata_FF[(word_idx+1)*32-1 -: 32];
+                next_data[block_idx] = mem_rdata;
+                proc_rdata = mem_rdata[(word_idx+1)*32-1 -: 32];
             end
             else begin
                 next_state = READ_MEM;
@@ -123,7 +121,6 @@ integer j;
 always@( posedge clk ) begin
     if( proc_reset ) begin
         mem_ready_FF <= 0;
-        mem_rdata_FF <= 128'b0;
         state <= IDLE;
         for (j = 0; j < NUM_OF_BLOCK; j=j+1) begin
             data[j]  <= 128'b0;
@@ -133,7 +130,6 @@ always@( posedge clk ) begin
     end
     else begin
         mem_ready_FF <= next_mem_ready_FF;
-        mem_rdata_FF <= next_mem_rdata_FF;
         state <= next_state;
         for (j = 0; j < NUM_OF_BLOCK; j=j+1) begin
             data[j]  <= next_data[j];

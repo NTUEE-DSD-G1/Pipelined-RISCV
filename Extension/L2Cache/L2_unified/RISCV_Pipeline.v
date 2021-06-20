@@ -1,30 +1,4 @@
-// v1
-// stall when branch jump
-// v2
-// detect EX data hazard at ID stage, remove EX_rs1, EX_rs2, EX_R_type..., add EX_data_hazard
-// v3
-// remove PC_4, combine PC+4 to jump_addr, use one adder
-// WB stage don't stall when DCACHE_stall
-// DCACHE_wdata uses next_reg_file
-// optimize ID data hazard
-// v3.1
-// stall 2 cycle when lw + jalr, R-type or I-type + jalr, add jalr_hazard
-// jalr R[rs1] modified (jump_addr)
-// v5
-// add branch to jalr_hazard
-// jalr/ branch/ PC+4 use diff adder for shorten critical path
-
 // v5.3
-// Reduce 1 adder (2??) and change SLT computation
-// sdc = 3.0
-// area = 285095.3
-// tb = 3.0 (total 6025.5ns)
-// sdc = 2.6
-// area = 304150.3
-// tb = 2.7 (total 5474.25ns)
-
-// v6
-// optimize hazard logic
 
 module RISCV_Pipeline (
     clk           ,
@@ -213,7 +187,7 @@ end
 
 // IF/ID FFs
 always @(*) begin
-    if (ICACHE_stall || DCACHE_stall || jalr_hazard) begin
+    if (ICACHE_stall || DCACHE_stall || jalr_hazard || load_use_hazard) begin
         next_ID_PC = ID_PC;
         next_ID_instr = ID_instr;
     end
@@ -362,10 +336,10 @@ end
 
 // detect ID data hazard
 always@ (*) begin
-    // if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
-    //     ID_data_hazard_A = EX_FORWARD;
-    // end
-    if (MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) begin
+    if (EX_reg_rd != 0 && EX_reg_rd == rs1 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
+        ID_data_hazard_A = EX_FORWARD;
+    end
+    else if (MEM_reg_rd != 0 && MEM_reg_rd == rs1 && MEM_reg_write) begin
         ID_data_hazard_A = MEM_FORWARD;
     end
     else if (WB_reg_rd != 0 && WB_reg_rd == rs1 && WB_reg_write) begin
@@ -375,10 +349,10 @@ always@ (*) begin
         ID_data_hazard_A = NO_HAZARD;
     end
 
-    // if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
-    //     ID_data_hazard_B = EX_FORWARD;
-    // end
-    if (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write) begin
+    if (EX_reg_rd != 0 && EX_reg_rd == rs2 && !EX_mem_read && EX_reg_write) begin // FIXME->this line can be deleted
+        ID_data_hazard_B = EX_FORWARD;
+    end
+    else if (MEM_reg_rd != 0 && MEM_reg_rd == rs2 && MEM_reg_write) begin
         ID_data_hazard_B = MEM_FORWARD;
     end
     else if (WB_reg_rd != 0 && WB_reg_rd == rs2 && WB_reg_write) begin
@@ -392,17 +366,17 @@ end
 // forwarding
 always @(*) begin // FIXME:  only consider WB_FORWARD
     case(ID_data_hazard_A)
-        // NO_HAZARD:   reg_file_r1 = reg_file[rs1];
-        // EX_FORWARD:  reg_file_r1 = alu_out;
-        // MEM_FORWARD: reg_file_r1 = next_WB_wb_data;
+        NO_HAZARD:   reg_file_r1 = reg_file[rs1];
+        EX_FORWARD:  reg_file_r1 = alu_out;
+        MEM_FORWARD: reg_file_r1 = next_WB_wb_data;
         WB_FORWARD:  reg_file_r1 = WB_wb_data;
         default:     reg_file_r1 = reg_file[rs1];
     endcase
 
     case(ID_data_hazard_B)
-        // NO_HAZARD:   reg_file_r2 = reg_file[rs2];
-        // EX_FORWARD:  reg_file_r2 = alu_out;
-        // MEM_FORWARD: reg_file_r2 = next_WB_wb_data;
+        NO_HAZARD:   reg_file_r2 = reg_file[rs2];
+        EX_FORWARD:  reg_file_r2 = alu_out;
+        MEM_FORWARD: reg_file_r2 = next_WB_wb_data;
         WB_FORWARD:  reg_file_r2 = WB_wb_data;
         default:     reg_file_r2 = reg_file[rs2];
     endcase
@@ -604,8 +578,9 @@ assign DCACHE_wen   = MEM_mem_write;
 assign DCACHE_addr  = MEM_alu_out[31:2];
 assign DCACHE_wdata = { reg_file[MEM_reg_rd][7:0]  , reg_file[MEM_reg_rd][15:8],
                         reg_file[MEM_reg_rd][23:16], reg_file[MEM_reg_rd][31:24] }; // FIXME
-// wire  [31:0] answer;
-// assign answer = reg_file[MEM_reg_rd];
+wire  [31:0] answer, rdata;
+assign answer = reg_file[MEM_reg_rd];
+assign rdata = { DCACHE_rdata[7:0], DCACHE_rdata[15:8], DCACHE_rdata[23:16], DCACHE_rdata[31:24]};
 
 // MEM/WB FFs
 always @(*) begin
