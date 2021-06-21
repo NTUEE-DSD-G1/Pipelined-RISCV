@@ -72,7 +72,7 @@ assign in_tag   = proc_addr[27:SET_OFFSET];
 assign set_idx  = proc_addr[SET_OFFSET-1:0];
 
 always @(*) begin
-    next_mem_ready_FF <= mem_ready;
+    next_mem_ready_FF = mem_ready;
     next_state = state;
     proc_ready = 1'b0;
     proc_rdata = 0;
@@ -147,6 +147,7 @@ always @(*) begin
                         next_valid[set_idx][old[set_idx]] = 1'b1;
                         next_tag[set_idx][old[set_idx]] = in_tag;
                         next_data[set_idx][old[set_idx]] = proc_wdata;
+                        next_dirty[set_idx][old[set_idx]] = 1'b1;
                     end
                 end
             end    
@@ -189,6 +190,7 @@ always @(*) begin
                 next_valid[set_idx][old[set_idx]] = 1'b1;
                 next_tag[set_idx][old[set_idx]] = in_tag;
                 next_data[set_idx][old[set_idx]] = proc_wdata;
+                next_dirty[set_idx][old[set_idx]] = 1'b1;
             end
             else begin
                 next_state = DIRTY_WRITE;

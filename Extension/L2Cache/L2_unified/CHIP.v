@@ -1,8 +1,7 @@
 // Top module of your design, you cannot modify this module!!
 `include "Icache.v"
 `include "Dcache.v"
-`include "Icache_L2.v"
-`include "Dcache_L2.v"
+`include "Unified_L2.v"
 `include "RISCV_Pipeline.v"
 
 module CHIP (	clk,
@@ -146,37 +145,33 @@ wire [127:0]  DCACHE_L2_rdata;
 		.mem_ready  (ICACHE_L2_ready)
 	);
 
-	Dcache_L2 D_cache_L2(
-			.clk        (clk)            ,
-			.proc_reset (~rst_n)         ,
-			.proc_read  (DCACHE_L2_ren)  ,
-			.proc_write (DCACHE_L2_wen)  ,
-			.proc_addr  (DCACHE_L2_addr) ,
-			.proc_rdata (DCACHE_L2_rdata),
-			.proc_wdata (DCACHE_L2_wdata),
-			.proc_ready (DCACHE_L2_ready),
-			.mem_read   (mem_read_D)     ,
-			.mem_write  (mem_write_D)    ,
-			.mem_addr   (mem_addr_D)     ,
-			.mem_wdata  (mem_wdata_D)    ,
-			.mem_rdata  (mem_rdata_D)    ,
-			.mem_ready  (mem_ready_D)
+	Unified_L2_Cache L2_cache(
+		.clk        	(clk)             ,
+		.proc_reset 	(~rst_n)          ,
+		.D_read  			(DCACHE_L2_ren)   ,
+		.D_write 			(DCACHE_L2_wen)   ,
+		.D_addr  			(DCACHE_L2_addr)  ,
+		.D_rdata 			(DCACHE_L2_rdata) ,
+		.D_wdata 			(DCACHE_L2_wdata) ,
+		.D_ready 			(DCACHE_L2_ready) ,
+		.D_mem_read   (mem_read_D)      ,
+		.D_mem_write  (mem_write_D)     ,
+		.D_mem_addr   (mem_addr_D)  		,
+		.D_mem_rdata  (mem_rdata_D) 		,
+		.D_mem_wdata  (mem_wdata_D) 		,
+		.D_mem_ready  (mem_ready_D)     ,
+		.I_read  			(ICACHE_L2_ren)   ,
+		.I_write 			(ICACHE_L2_wen)   ,
+		.I_addr  			(ICACHE_L2_addr)  ,
+		.I_rdata 			(ICACHE_L2_rdata) ,
+		.I_wdata 			(ICACHE_L2_wdata) ,
+		.I_ready 			(ICACHE_L2_ready) ,
+		.I_mem_read   (mem_read_I)      ,
+		.I_mem_write  (mem_write_I)     ,
+		.I_mem_addr   (mem_addr_I)      ,
+		.I_mem_rdata  (mem_rdata_I)     ,
+		.I_mem_wdata  (mem_wdata_I)     ,
+		.I_mem_ready  (mem_ready_I)
 	);
 
-	Icache_L2 I_cache_L2(
-		.clk        (clk)            ,
-		.proc_reset (~rst_n)         ,
-		.proc_read  (ICACHE_L2_ren)  ,
-		.proc_write (ICACHE_L2_wen)  ,
-		.proc_addr  (ICACHE_L2_addr) ,
-		.proc_rdata (ICACHE_L2_rdata),
-		.proc_wdata (ICACHE_L2_wdata),
-		.proc_ready (ICACHE_L2_ready),
-		.mem_read   (mem_read_I)     ,
-		.mem_write  (mem_write_I)    ,
-		.mem_addr   (mem_addr_I)     ,
-		.mem_wdata  (mem_wdata_I)    ,
-		.mem_rdata  (mem_rdata_I)    ,
-		.mem_ready  (mem_ready_I)
-	);
 endmodule
