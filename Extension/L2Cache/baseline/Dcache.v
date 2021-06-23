@@ -32,9 +32,11 @@ module Dcache(
     output [127:0] mem_wdata;
 
 //==== parameter ==========================================
+// SPEC
 parameter NUM_OF_SET = 4;
 parameter NUM_OF_WAY = 2;
 
+// Cache state
 parameter IDLE = 3'd1;
 parameter READ_MEM = 3'd2;
 parameter WRITE_MEM = 3'd3;
@@ -72,8 +74,11 @@ assign write = ~proc_read & proc_write;
 assign in_tag = proc_addr[29:4];
 assign set_idx = proc_addr[3:2];
 assign word_idx = proc_addr[1:0];
-
+// reg [31:0] miss, next_miss;
+// reg [31:0] total, next_total;
 always @(*) begin
+    // next_miss = miss;
+    // next_total = total;
     next_mem_ready_FF = mem_ready;
     next_state = state;
     proc_stall = 1'b0;
@@ -93,7 +98,9 @@ always @(*) begin
     end
     case (state)
         IDLE: begin
+            // if (read ^ write) next_total = total+1;
             if (read) begin
+                // if write buffer is writing cache and fetch same address
                 if (valid[set_idx][0] && (tag[set_idx][0] == in_tag)) begin // hit
                     next_state = IDLE;
                     proc_rdata = data[set_idx][0][(word_idx+1)*32-1 -: 32];
@@ -105,6 +112,7 @@ always @(*) begin
                     next_old[set_idx] = 1'b0;
                 end
                 else begin
+                    // next_miss = miss+1;
                     if (dirty[set_idx][old[set_idx]]) begin // dirty, need write first
                         next_state = DIRTY_READ;
                         mem_write = 1'b1;
@@ -134,6 +142,7 @@ always @(*) begin
                     next_old[set_idx] = 1'b0;
                 end
                 else begin
+                    // next_miss = miss + 1;
                     if (dirty[set_idx][old[set_idx]]) begin
                         next_state = DIRTY_WRITE;
                         mem_write = 1'b1;
@@ -225,6 +234,8 @@ end
 integer j, k;
 always@( posedge clk ) begin
     if( proc_reset ) begin
+        // miss <= 0;
+        // total <= 0;
         mem_ready_FF <= 0;
         state <= IDLE;
         for (j = 0; j < NUM_OF_SET; j=j+1) begin
@@ -238,6 +249,8 @@ always@( posedge clk ) begin
         end
     end
     else begin
+        // miss <= next_miss;
+        // total <= next_total;
         mem_ready_FF <= next_mem_ready_FF;
         state <= next_state;
         for (j = 0; j < NUM_OF_SET; j=j+1) begin

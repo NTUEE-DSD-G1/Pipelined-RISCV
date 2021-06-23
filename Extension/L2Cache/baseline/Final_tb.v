@@ -33,6 +33,10 @@
 	`define IMEM_INIT "I_mem_L2Cache"
 	`include "./TestBed_L2Cache.v"
 `endif
+`ifdef L2Cache_mod
+	`define IMEM_INIT "I_mem_L2Cache_mod"
+	`include "./TestBed_L2Cache.v"
+`endif
 
 module Final_tb;
 
