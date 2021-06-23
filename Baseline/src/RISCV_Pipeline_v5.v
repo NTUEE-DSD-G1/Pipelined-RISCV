@@ -212,7 +212,7 @@ end
 
 // IF/ID FFs
 always @(*) begin
-    if (ICACHE_stall || DCACHE_stall || jalr_hazard) begin
+    if (ICACHE_stall || DCACHE_stall || load_use_hazard || jalr_hazard) begin
         next_ID_PC = ID_PC;
         next_ID_instr = ID_instr;
     end
@@ -434,11 +434,12 @@ end
 
 // jump address
 // assign jump_addr_adder_out = jump_addr_adder_in1 + jump_addr_adder_in2;
-reg  [31:0]  branch_jal_addr, jalr_addr, default_addr;
+reg  [31:0]  branch_jal_addr, default_addr;
+wire [31:0] jalr_addr;
+assign jalr_addr = $signed(jump_addr_add1) + $signed(imm);
 always @(*) begin
     // jump_addr = jump_addr_adder_out;
     branch_jal_addr = $signed(ID_PC << 2) + $signed(imm);
-    jalr_addr = $signed(jump_addr_add1) + $signed(imm);
 
     case(ID_data_hazard_A)
         MEM_FORWARD: jump_addr_add1 = MEM_alu_out;
@@ -601,10 +602,11 @@ end
 assign DCACHE_ren   = MEM_mem_read;
 assign DCACHE_wen   = MEM_mem_write;
 assign DCACHE_addr  = MEM_alu_out[31:2];
-assign DCACHE_wdata = { reg_file[MEM_reg_rd][7:0]  , reg_file[MEM_reg_rd][15:8],
-                        reg_file[MEM_reg_rd][23:16], reg_file[MEM_reg_rd][31:24] }; // FIXME
-// wire  [31:0] answer;
-// assign answer = reg_file[MEM_reg_rd];
+assign DCACHE_wdata = (MEM_reg_rd == WB_reg_rd & WB_reg_write) ? 
+                        { WB_wb_data[7:0]  , WB_wb_data[15:8], WB_wb_data[23:16], WB_wb_data[31:24] } : 
+                        { reg_file[MEM_reg_rd][7:0]  , reg_file[MEM_reg_rd][15:8], reg_file[MEM_reg_rd][23:16], reg_file[MEM_reg_rd][31:24] }; // FIXME
+wire  [31:0] answer;
+assign answer = { DCACHE_wdata[7:0]  , DCACHE_wdata[15:8], DCACHE_wdata[23:16], DCACHE_wdata[31:24] };
 
 // MEM/WB FFs
 always @(*) begin
