@@ -1,5 +1,8 @@
 This folder is for L1 I/D Cache, unified L2 Cache (2 versions included).
 
+Comparing to v1, v2 is optimized and bandwidth between L2 Cache & memory is reduced by 1/2,
+which makes more sense.
+
 simulation:
 - RTL
   > ncverilog Final_tb.v CHIP.v slow_memory.v +access+r +define<+option>
