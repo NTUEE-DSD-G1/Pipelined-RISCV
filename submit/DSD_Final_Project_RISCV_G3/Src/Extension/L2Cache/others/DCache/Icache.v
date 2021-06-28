@@ -67,10 +67,10 @@ assign read     = proc_read;
 assign in_tag   = proc_addr[29:2+BLOCK_OFFSET];
 assign block_idx  = proc_addr[1+BLOCK_OFFSET:2];
 assign word_idx = proc_addr[1:0];
-reg [31:0] miss, next_miss;
+// reg [31:0] miss, next_miss;
 // reg [31:0] total, next_total;
 always @(*) begin
-    next_miss = miss;
+    // next_miss = miss;
     // next_total = total;
     next_mem_ready_FF = mem_ready;
     next_state = state;
@@ -94,7 +94,7 @@ always @(*) begin
                     proc_rdata = data[block_idx][(word_idx+1)*32-1 -: 32];
                 end
                 else begin
-                    next_miss = miss+1;
+                    // next_miss = miss+1;
                     next_state = READ_MEM;
                     mem_read = 1'b1;
                     mem_addr = { in_tag, block_idx };
@@ -125,7 +125,7 @@ end
 integer j;
 always@( posedge clk ) begin
     if( proc_reset ) begin
-        miss <= 0;
+        // miss <= 0;
         // total <= 0;
         mem_ready_FF <= 0;
         state <= IDLE;
@@ -136,7 +136,7 @@ always@( posedge clk ) begin
         end
     end
     else begin
-        miss <= next_miss;
+        // miss <= next_miss;
         // total <= next_total;
         mem_ready_FF <= next_mem_ready_FF;
         state <= next_state;
