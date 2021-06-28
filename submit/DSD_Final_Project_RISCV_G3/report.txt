@@ -1,4 +1,0 @@
-L2 Cache:
-(1) memory access time(ns):
-  total miss/total fetch * clk
-  0.029393482 * 4.5ns = 21*4.5 = 0.132 ns
