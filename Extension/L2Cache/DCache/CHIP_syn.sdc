@@ -4,7 +4,7 @@ current_design [get_designs CHIP]
 #You may modified the clock constraints 
 #or add more constraints for your design
 ####################################################
-set cycle  4.5        
+set cycle  4.4        
 ####################################################
 
 

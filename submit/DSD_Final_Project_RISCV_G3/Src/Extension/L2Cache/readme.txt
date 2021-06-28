@@ -1,3 +1,5 @@
+clk time for tb: 4.5ns
+
 Folder structure:
 rtl/: rtl codes for submission(to run tb)
 syn/: synthesis files for submission(to run tb)

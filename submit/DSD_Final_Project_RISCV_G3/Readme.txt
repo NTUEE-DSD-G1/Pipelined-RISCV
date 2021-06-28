@@ -39,4 +39,13 @@ Compression(SYN)
 	4. There are some setup warning before the reset signal is given
 L2cache(RTL)
 
+	1. make sure all files in "DSD_Final_Project_RISCV_G3/Src/Extension/L2Cache/rtl" exist
+	2. ncverilog Final_tb.v CHIP.v slow_memory.v +define+L2Cache +access+r
+	3. For more information, please refer to readme.txt in "DSD_Final_Project_RISCV_G3/Src/Extension/L2Cache
+
 L2cache(SYN)
+	1. make sure all files in "DSD_Final_Project_RISCV_G3/Src/Extension/L2Cache/syn" exist
+	2. ncverilog Final_tb.v CHIP_syn.v slow_memory.v tsmc13.v +define+L2Cache +define+SDF +access+r
+	3. You can open CHIP_syn.ddc in dv to see the area
+	4. There are some setup warning before the reset signal is given
+	5. For more information, please refer to readme.txt in "DSD_Final_Project_RISCV_G3/Src/Extension/L2Cache

@@ -5,7 +5,7 @@ simulation:
 - RTL
   > ncverilog Final_tb.v CHIP.v slow_memory.v +access+r +define<+option>
 - SYN
-  > ncverilog Final_tb.v CHIP_syn.v slow_memory.v tsmc13.v +access+r +define<+option> +define+SDF
+  > ncverilog Final_tb.v CHIP.v slow_memory.v tsmc13.v +access+r +define<+option> +define+SDF
 option: hasHazard, L2Cache, L2Cache_mod
 
 Files:
@@ -23,7 +23,7 @@ Files:
   TestBed_hasHazard.v: baseline's tb
   TestBed_L2Cache.v: L2Cache & modified L2Cache's tb
   ------ differ from spec ------
-  Icache.v: directed map L1 ICache
-  Icache_2way.v: 2 way associative L1 ICache
+  Icache_dm.v: directed map L1 ICache
+  Icache.v: 2 way associative L1 ICache
   Dcache.v: 2-way L1 DCache
   Dcache_L2.v: 2-way L2 DCache
